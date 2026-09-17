@@ -10,6 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The test runner has its own project. -->
+    <Compile Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- All of these ship with SimHub, so they're referenced but never copied next to the plugin. -->
     <Reference Include="SimHub.Plugins">
       <HintPath>$(SimHubPath)SimHub.Plugins.dll</HintPath>
       <Private>false</Private>
@@ -26,6 +33,19 @@
       <HintPath>$(SimHubPath)log4net.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="iRacingSDK">
+      <HintPath>$(SimHubPath)iRacingSDK.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubPath)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LovelyCarDataCapture.Tests" />
   </ItemGroup>
 
 </Project>
