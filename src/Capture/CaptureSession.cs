@@ -42,6 +42,16 @@ namespace LovelyCarDataCapture
         public string OutputFolder { get; set; } = "";
         /// <summary>Look the car up in the Lovely Car Data repo and build on its current file.</summary>
         public bool UseRepoFile { get; set; } = true;
+
+        /// <summary>Watch the car's rev lights on screen while capturing, for games that don't report them.</summary>
+        public bool ScreenCapture { get; set; }
+        /// <summary>The box to watch, in screen pixels; set by the "Position the box" window.</summary>
+        public int ScreenBoxX { get; set; }
+        public int ScreenBoxY { get; set; }
+        public int ScreenBoxWidth { get; set; }
+        public int ScreenBoxHeight { get; set; }
+        /// <summary>Frames read per second. Higher narrows each threshold a little; 30 is plenty for a slow sweep.</summary>
+        public int ScreenCaptureFps { get; set; } = 30;
         public string RepoBranch { get; set; } = "main";
         /// <summary>
         /// Also write the export to ATSR's Developer Mode folder (&lt;SimHub&gt;\_ATSR_DevelopmentData\rpm_data)

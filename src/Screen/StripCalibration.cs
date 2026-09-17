@@ -93,8 +93,11 @@ namespace LovelyCarDataCapture.Screen
                 else groups.Add(new List<double> { sorted[i] });
             }
 
+            // Over a capture, a position seen only once or twice is noise. A handful of frames - the
+            // Test button reads one - has nothing to sift, so take what's there.
             int heaviest = groups.Max(g => g.Count);
-            var lights = groups.Where(g => g.Count >= Math.Max(3, heaviest * 0.02))
+            double needed = _frames >= 30 ? Math.Max(3, heaviest * 0.02) : 1;
+            var lights = groups.Where(g => g.Count >= needed)
                                .Select(g => g.Average())
                                .OrderBy(x => x)
                                .ToList();

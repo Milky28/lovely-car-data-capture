@@ -42,6 +42,12 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="System.Net.Http" />
+    <!-- Reading the rev lights off the screen, and the window used to place the capture box. -->
+    <Reference Include="System.Drawing" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
   </ItemGroup>
 
   <ItemGroup>

@@ -20,6 +20,12 @@ namespace LovelyCarDataCapture.Tests
             string repoData = null;
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--repo-data") repoData = args[i + 1];
             _showReports = args.Contains("--show-reports");
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i] != "--grab") continue;
+                GrabFromScreen(args[i + 1]);
+                return 0;
+            }
 
             Run("Slug follows the README examples", SlugExamples);
             Run("CarProfile round-trips the repo layout", ProfileRoundTrip);
@@ -47,6 +53,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Manual mark undo", ManualMarkUndo);
             Run("Screen detector finds the lights in real frames", ScreenDetectorOnFrames);
             Run("Screen calibration finds the strip's gaps", ScreenCalibration);
+            Run("Screen calibration works from a single frame", ScreenCalibrationFromOneFrame);
             Run("Screen capture matches the AMS2 Audi's repo values", ScreenThresholdsMatchRepoFile);
             Run("Screen colors are grouped and named", ScreenColorsAreGrouped);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);

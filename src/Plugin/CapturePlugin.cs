@@ -10,6 +10,7 @@ using LovelyCarDataCapture.Profile;
 using LovelyCarDataCapture.Repo;
 using LovelyCarDataCapture.Util;
 using LovelyCarDataCapture.Plugin;
+using LovelyCarDataCapture.Screen;
 using SimHub.Plugins;
 
 namespace LovelyCarDataCapture
@@ -17,7 +18,7 @@ namespace LovelyCarDataCapture
     [PluginName("Lovely Car Data Capture")]
     [PluginAuthor("Lovely Car Data contributors")]
     [PluginDescription("Records car id, gears and LED RPMs from live telemetry (real rev/shift lights for F1 and iRacing) and exports a Lovely Car Data v2.0.0 car file, starting from the car's current repo file when there is one.")]
-    public class CapturePlugin : IPlugin, IDataPlugin
+    public class CapturePlugin : IPlugin, IDataPlugin, IWPFSettingsV2
     {
         private const string LogPrefix = "[LovelyCarDataCapture] ";
         private static readonly TimeSpan RepoWaitOnExport = TimeSpan.FromSeconds(10);
@@ -34,6 +35,9 @@ namespace LovelyCarDataCapture
         private volatile string _repoStatus = "";
         private volatile string _lastMark = "";
         private string _loggedRawType;
+        private readonly ScreenCaptureLoop _screen = new ScreenCaptureLoop();
+        // Set by DataUpdate so the screen thread knows whether this frame is worth recording (guarded by _lock).
+        private bool _skipScreenFrame = true;
         // Latest gear and RPM seen by DataUpdate, for the mark actions (guarded by _lock).
         private string _currentGear;
         private int _currentRpm;
@@ -55,14 +59,20 @@ namespace LovelyCarDataCapture
             this.AttachDelegate("LastReportPath", () => _lastReportPath);
             this.AttachDelegate("LastAtsrDeveloperPath", () => _lastAtsrDevPath);
             this.AttachDelegate("LastMark", () => _lastMark);
+            this.AttachDelegate("ScreenCaptureStatus", () => _screen.Status);
+            this.AttachDelegate("ScreenLights", () => _screen.LightsSeen);
+
+            _screen.Target = ScreenTargetNow;
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
             this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => StopAndExport());
-            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => { lock (_lock) { _session = null; _lookup = null; } _repoStatus = ""; _lastMark = ""; });
+            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => { lock (_lock) { _session = null; _lookup = null; _skipScreenFrame = true; } _repoStatus = ""; _lastMark = ""; });
             // For games that don't report their LEDs: press as each in-game light comes on while revving slowly.
             this.AddAction(actionName: "MarkLed", actionStart: (pm, _) => Mark(redline: false));
             this.AddAction(actionName: "MarkRedline", actionStart: (pm, _) => Mark(redline: true));
             this.AddAction(actionName: "UndoMark", actionStart: (pm, _) => UndoMark());
+            // Games that don't report their lights: put the box over them, then capture as usual.
+            this.AddAction(actionName: "ShowCaptureBox", actionStart: (pm, _) => ShowCaptureBox());
         }
 
         private void Mark(bool redline)
@@ -99,7 +109,11 @@ namespace LovelyCarDataCapture
 
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
-            if (!_capturing || !data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null) return;
+            if (!_capturing || !data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null)
+            {
+                lock (_lock) _skipScreenFrame = true;
+                return;
+            }
             var d = data.NewData;
             if (string.IsNullOrEmpty(d.CarId)) return;
 
@@ -122,7 +136,13 @@ namespace LovelyCarDataCapture
                     Math.Max(d.CarSettings_MaxRPM, d.MaxRpm), d.CarSettings_MaxGears);
 
                 // The pit limiter drives its own light patterns in most games.
-                if (d.PitLimiterOn != 0) { s.PitLimiterSamples++; return; }
+                if (d.PitLimiterOn != 0)
+                {
+                    s.PitLimiterSamples++;
+                    _skipScreenFrame = true;
+                    return;
+                }
+                _skipScreenFrame = _currentRpm <= 0 || string.IsNullOrEmpty(_currentGear);
 
                 var raw = d.GetRawDataObject();
                 if (RawTelemetry.TryReadF1(raw, out var f1))
@@ -143,16 +163,97 @@ namespace LovelyCarDataCapture
 
         public void End(PluginManager pluginManager)
         {
+            _screen.Stop();
             this.SaveCommonSettings("CaptureSettings", Settings);
         }
 
         private void StartCapture()
         {
-            lock (_lock) { _session = null; _lookup = null; }
+            lock (_lock) { _session = null; _lookup = null; _skipScreenFrame = true; }
             _repoStatus = "";
             _capturing = true;
+            StartScreenCapture();
             SimHub.Logging.Current.Info(LogPrefix + "Capture started. Drive through every gear and rev each one to the limiter.");
         }
+
+        private void StartScreenCapture()
+        {
+            if (!Settings.ScreenCapture) return;
+            var box = SettingsBox();
+            if (box.Width < 8 || box.Height < 4)
+            {
+                SimHub.Logging.Current.Warn(LogPrefix + "Reading the lights off the screen is on, but no capture box has been placed. " +
+                                            "Open the plugin's page in SimHub and position it.");
+                return;
+            }
+            _screen.Start(box, Settings.ScreenCaptureFps);
+            SimHub.Logging.Current.Info(LogPrefix + "Watching " + box.Width + "x" + box.Height + " at " + box.X + "," + box.Y +
+                                        " for the car's rev lights.");
+        }
+
+        private PixelRect SettingsBox() =>
+            new PixelRect(Settings.ScreenBoxX, Settings.ScreenBoxY, Settings.ScreenBoxWidth, Settings.ScreenBoxHeight);
+
+        /// <summary>
+        /// What the screen thread should record its next frame against, or null to drop it: no car yet,
+        /// the game paused, the pit limiter on, or a game that reports its lights properly anyway.
+        /// </summary>
+        private ScreenTarget ScreenTargetNow()
+        {
+            lock (_lock)
+            {
+                if (!_capturing || _session == null || _skipScreenFrame) return null;
+                if (_session.F1.HasData || _session.IRacing.HasData) return null;
+                return new ScreenTarget { Gear = _currentGear, Rpm = _currentRpm, Capture = _session.Screen };
+            }
+        }
+
+        private void ShowCaptureBox()
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null)
+            {
+                SimHub.Logging.Current.Warn(LogPrefix + "The capture box needs SimHub's own window; open SimHub and try again.");
+                return;
+            }
+            app.Dispatcher.Invoke(() =>
+            {
+                try { ShowCaptureBoxFor(null, region => _screen.Describe(region)); }
+                catch (Exception ex) { SimHub.Logging.Current.Error(LogPrefix + "Couldn't open the capture box", ex); }
+            });
+        }
+
+        private void SaveCaptureBox(PixelRect region)
+        {
+            Settings.ScreenBoxX = region.X;
+            Settings.ScreenBoxY = region.Y;
+            Settings.ScreenBoxWidth = region.Width;
+            Settings.ScreenBoxHeight = region.Height;
+            this.SaveCommonSettings("CaptureSettings", Settings);
+            SimHub.Logging.Current.Info(LogPrefix + "Capture box set to " + region.Width + "x" + region.Height + " at " + region.X + "," + region.Y + ".");
+            // Already capturing: pick the new box up straight away.
+            if (_capturing && Settings.ScreenCapture) StartScreenCapture();
+        }
+
+        private void ShowCaptureBoxFor(Action<PixelRect> onSave, Func<PixelRect, string> test)
+        {
+            var window = new CaptureBoxWindow(SettingsBox(), region =>
+            {
+                SaveCaptureBox(region);
+                onSave?.Invoke(region);
+            }, test);
+            window.Show();
+            window.Activate();
+        }
+
+        // ---------- SimHub's settings page ----------
+        public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager) =>
+            new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
+                                      region => _screen.Describe(region), ShowCaptureBoxFor);
+
+        public string LeftMenuTitle => "Lovely Car Data Capture";
+
+        public System.Windows.Media.ImageSource PictureIcon => null;
 
         private void StartRepoLookup(string gameName, string carId)
         {
@@ -177,6 +278,7 @@ namespace LovelyCarDataCapture
         private void StopAndExport()
         {
             _capturing = false;
+            _screen.Stop();
 
             CaptureSession session;
             Task<RepoLookup> lookupTask;
@@ -272,6 +374,7 @@ namespace LovelyCarDataCapture
             if (s == null) return "";
             if (s.F1.HasData) return "F1 rev lights";
             if (s.IRacing.HasData) return "iRacing shift lights";
+            if (s.Screen.HasData) return "Rev lights read off the screen";
             if (s.Marks.HasData) return "Manual marks";
             return "SimHub redline only";
         }
@@ -284,6 +387,8 @@ namespace LovelyCarDataCapture
                 return string.Join(" ", s.F1.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.F1.Result(g).CapturedCount + "/" + LedWindowCapture.F1LedCount));
             if (s.IRacing.HasData)
                 return (s.IRacing.CarWide != null ? "car-wide ✓ " : "") + string.Join(" ", s.IRacing.Gears.OrderBy(CarProfile.GearRank));
+            if (s.Screen.HasData)
+                return s.Screen.SampleCount + " frames, up to " + s.Screen.MostLightsSeen + " lights at once";
             if (s.Marks.HasData)
                 return string.Join(" ", s.Marks.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.Marks.LedMarks(g).Count + (s.Marks.Redline(g).HasValue ? "+RL" : "")));
             return "";

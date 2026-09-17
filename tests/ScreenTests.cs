@@ -127,6 +127,18 @@ namespace LovelyCarDataCapture.Tests
             Check(layout.Pitch > 20 && layout.Pitch < 32, "spacing is about 26px, got " + layout.Pitch.ToString("0.0", CultureInfo.InvariantCulture));
         }
 
+        /// <summary>One frame is all the Test button in SimHub has to work with, so that has to be enough.</summary>
+        private static void ScreenCalibrationFromOneFrame()
+        {
+            var blobs = new StripDetector().Detect(LoadFrame("strip-full.png"), new PixelRect(0, 0, 440, 100));
+            var calibration = new StripCalibration();
+            calibration.Add(blobs);
+            var layout = calibration.Build(out string problem);
+            Check(layout != null, "a single full frame is enough to see the strip: " + problem);
+            Equal(12, layout.LedNumber, "slots seen in one frame");
+            Equal(2, layout.GapCount, "gaps seen in one frame");
+        }
+
         // ---------- thresholds, colours, redline ----------
         private static void ScreenThresholdsMatchRepoFile()
         {
@@ -239,6 +251,30 @@ namespace LovelyCarDataCapture.Tests
             Equal("#FFFFFF00", groups.First(g => g.Slots.Contains(3)).Hex, "the one below green is yellow");
             Equal("#FFFF8000", groups.First(g => g.Slots.Contains(4)).Hex, "the one above red is orange");
             Check(groups.All(g => !g.Slots.Contains(2)), "the gap has no colour");
+        }
+
+        /// <summary>
+        /// Grabs a region of the real screen with the plugin's own grabber and reports what it finds.
+        /// Used by hand (--grab x,y,w,h) to check the capture path outside SimHub.
+        /// </summary>
+        private static void GrabFromScreen(string spec)
+        {
+            var parts = spec.Split(',');
+            var region = new PixelRect(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
+            using (var grabber = new LovelyCarDataCapture.Plugin.ScreenGrabber())
+            {
+                var frame = grabber.Grab(region, out string problem);
+                if (frame == null) { Console.WriteLine("Grab failed: " + problem); return; }
+                var blobs = new StripDetector().Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Console.WriteLine("Grabbed " + frame.Width + "x" + frame.Height + ", " + blobs.Count + " lights:");
+                foreach (var b in blobs)
+                    Console.WriteLine("  x " + b.CenterX.ToString("0", CultureInfo.InvariantCulture) + " w " + b.Width + " " + b.Color + " " + b.Color.ToHex());
+                var calibration = new StripCalibration();
+                calibration.Add(blobs);
+                var layout = calibration.Build(out string why);
+                Console.WriteLine(layout == null ? "No strip: " + why
+                    : "Strip: " + layout.LedNumber + " slots, " + layout.GapCount + " gaps, spacing " + layout.Pitch.ToString("0.0", CultureInfo.InvariantCulture));
+            }
         }
 
         private static string AudiRepoJson() => @"{

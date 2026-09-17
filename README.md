@@ -10,7 +10,7 @@ report explaining where every value came from. It never uploads anything.
 | --- | --- | --- |
 | F1 2021–2026 | Real rev lights | Reads the game's 15 rev-light bits and learns the RPM each light switches on, per gear, plus where the redline flash starts. |
 | iRacing | Real shift lights | Reads iRacing's first-LED / shift / last-LED / blink RPMs (per gear where the car changes them). LEDs in between are spaced evenly. |
-| Everything else | Lights read off the screen | Watches the car's own rev lights in the picture (see *Reading the lights off the screen*). Offline for now. |
+| Everything else | Lights read off the screen | Watches the car's own rev lights through a box you place over them (see *Reading the lights off the screen*). |
 | Everything else | Manual marks | You press a button as each in-game light comes on (see *Marking lights by hand*). |
 | Everything else, no marks | Estimate only | Uses SimHub's redline; LEDs are spread between two percentages of it. |
 
@@ -58,7 +58,7 @@ instead of the repo's file.
 2. Copy the DLL into the SimHub folder (default `C:\Program Files (x86)\SimHub`) and restart SimHub.
 3. Enable **Lovely Car Data Capture** when SimHub asks.
 4. Map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`, `StopAndExport`, `ResetCapture`,
-   and for games without LED data `MarkLed`, `MarkRedline`, `UndoMark`.
+   and for games without LED data `ShowCaptureBox`, `MarkLed`, `MarkRedline`, `UndoMark`.
 
 ## Use
 
@@ -77,9 +77,21 @@ Switching cars during a capture starts a new one and discards the old, so export
 
 Most games don't report their rev lights, but they do draw them, so the lights can be read out of the
 picture: bright saturated dots on a dark wheel, which nothing else in a cockpit looks like. Pairing
-what's lit with the RPM at that moment gives the same thresholds the F1 games hand over directly.
+what's lit with the RPM from telemetry at that moment gives the same thresholds the F1 games hand
+over directly.
 
-What it works out from a few slow sweeps:
+**Setting it up:**
+
+1. Open **Lovely Car Data Capture** in SimHub's left menu and tick *Read the rev lights off the screen*.
+2. Sit in the car with the lights visible, then press **Position the box…**. Drag the orange frame over
+   the rev lights, resize it from the bottom right corner, and leave a little room around them.
+3. Press **Test** to see what it finds. Rev the engine so some lights are on first; it reports how many
+   it sees, their colours, and any gaps between them. **Save** keeps the box for next time.
+4. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
+
+The box can also be opened from a wheel button: map `LovelyCarDataCapture.ShowCaptureBox`.
+
+**What it works out** from a few sweeps:
 
 - **How many lights there are and where the gaps are**, from the spacing between them. A wider space
   than the rest is a slot that never lights, and the car file needs those slots too.
@@ -93,21 +105,32 @@ What it works out from a few slow sweeps:
 Each light's own colour is learned while the strip is only partly lit, because it can't be in its
 redline state then. That's also why sweeps have to start below the first light.
 
-**This runs offline today**, on a recording, not live in SimHub. Record a clip, then:
+**What it needs:**
+
+- **Borderless or windowed mode.** Exclusive fullscreen hands its frames straight to the display, where
+  nothing else can read them.
+- **A camera that doesn't move.** Turn off head movement and camera shake; a few pixels of drift are
+  fine, but a moving cockpit isn't. VR won't work at all.
+- **The same lights every time.** Don't change seat position or field of view mid-capture.
+
+`ScreenCaptureStatus` and `ScreenLights` show what the capture thread is seeing while you drive.
+F1 and iRacing report their lights properly, so screen reading is skipped there, and pit-limiter
+frames are ignored as in the rest of the plugin.
+
+#### Tuning it on a recording
+
+The same detection runs offline, which is how it was built and how to check a change:
 
 ```bash
 python tools/offline/analyze_recording.py glyphs clip.mkv --rpm-box 1426,620,144,60 --led-box 2320,1100,440,100
 python tools/offline/analyze_recording.py run clip.mkv --rpm-box 1426,620,144,60 --led-box 2320,1100,440,100 --labels <digits from glyphs.png> --out car.csv
 ```
 
-The first step writes the digit shapes of the on-screen RPM readout so you can tell it what they are;
+The first step writes the digit shapes of an on-screen RPM readout so you can tell it what they are;
 the second writes a CSV of every frame. `tests/data` holds one made this way, from an AMS2 Audi R8
-LMS GT3 evo II, and the tests check the values it produces against that car's file in the repo.
-
-For a recording the detector can work with: borderless windowed, a fixed cockpit camera with head
-movement and motion blur off, an RPM readout visible, and several slow climbs from idle to the
-limiter, holding the limiter a few seconds. The game's own HUD readout beats a SimHub overlay, which
-lags the game by a frame or two and reads roughly 15 rpm low while the revs climb.
+LMS GT3 evo II, and the tests check the values it produces against that car's file in the repo. Note
+that a recording reads the RPM off the screen, where a SimHub overlay lags the game by a frame or two
+and so reads about 15 rpm low while the revs climb; live capture takes RPM from telemetry and doesn't.
 
 ### Marking lights by hand
 
@@ -126,7 +149,8 @@ LEDs are laid out left to right, one per mark. Marks include your reaction time,
 ### SimHub properties
 
 `LovelyCarDataCapture.Capturing`, `CarId`, `GearsSeen`, `LedSource`, `LedProgress` (e.g. `3:15/15 4:9/15`,
-or `3:10+RL` for marks), `LastMark`, `RepoStatus`, `LastExportPath`, `LastReportPath`, `LastAtsrDeveloperPath`.
+or `3:10+RL` for marks), `LastMark`, `RepoStatus`, `LastExportPath`, `LastReportPath`, `LastAtsrDeveloperPath`,
+`ScreenCaptureStatus`, `ScreenLights`.
 
 ### Settings
 
@@ -137,6 +161,9 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `UseRepoFile` | `true` | Look the car up on GitHub and build on its file. |
 | `RepoBranch` | `main` | |
 | `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's Developer Mode folder. |
+| `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
+| `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
+| `ScreenCaptureFps` | `30` | Frames read per second. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |
 | `LedNumber` | `12` | LED count for new cars in games without LED data. |
 | `FirstLedPercent` / `LastLedPercent` | `72` / `97.5` | Estimate spread for games without LED data. |
@@ -162,9 +189,9 @@ Test runner options:
 ## Layout
 
 - `src/Capture` – per-game capture logic (no SimHub types, unit tested)
-- `src/Screen` – reading rev lights out of the picture
+- `src/Screen` – reading rev lights out of the picture (no SimHub types, unit tested)
 - `src/Profile` – car file model, LED layouts, and merging captures into a file
 - `src/Repo` – read-only GitHub lookup
-- `src/Plugin` – SimHub plugin and raw telemetry readers
+- `src/Plugin` – SimHub plugin, raw telemetry readers, screen grabbing and the capture box window
 - `tests` – console test runner, with a real recording in `tests/data`
 - `tools/offline` – turns a screen recording into that test data
