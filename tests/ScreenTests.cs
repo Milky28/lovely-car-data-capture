@@ -516,9 +516,12 @@ namespace LovelyCarDataCapture.Tests
                     ScreenCapture = true,
                     ScreenBoxX = 2191, ScreenBoxY = 1150, ScreenBoxWidth = 664, ScreenBoxHeight = 100,
                 };
+                bool capturing = false;
                 var control = new LovelyCarDataCapture.Plugin.ScreenSettingsControl(
                     settings, () => { }, Describe, (save, test) => { }, Console.WriteLine,
-                    () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"));
+                    () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"),
+                    () => capturing = true, () => capturing = false, () => capturing,
+                    () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing");
                 new System.Windows.Window
                 {
                     Title = "Settings preview",

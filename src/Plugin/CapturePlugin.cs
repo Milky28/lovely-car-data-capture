@@ -360,7 +360,11 @@ namespace LovelyCarDataCapture
         // ---------- SimHub's settings page ----------
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager) =>
             new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
-                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say, OutputFolder);
+                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say, OutputFolder,
+                                      StartCapture,
+                                      // Exporting waits on GitHub, so it can't run on the thread drawing this page.
+                                      () => Task.Run(() => StopAndExport()),
+                                      () => _capturing, OverlayStatus);
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 

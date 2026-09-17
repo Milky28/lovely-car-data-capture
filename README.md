@@ -57,12 +57,14 @@ instead of the repo's file.
 1. Build (below) or take `LovelyCarDataCapture.dll` from `bin/Release/net48/`.
 2. Copy the DLL into the SimHub folder (default `C:\Program Files (x86)\SimHub`) and restart SimHub.
 3. Enable **Lovely Car Data Capture** when SimHub asks.
-4. Map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`, `StopAndExport`, `ResetCapture`,
-   and for games without LED data `ShowCaptureBox`, `MarkLed`, `MarkRedline`, `UndoMark`.
+4. Optionally map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`,
+   `StopAndExport`, `ResetCapture`, `ShowCaptureBox`, and for games without LED data `MarkLed`,
+   `MarkRedline`, `UndoMark`. A capture can also be started and stopped from the plugin's own page,
+   which is enough for a game that keeps running while it hasn't got focus.
 
 ## Use
 
-1. Sit in the car and trigger **StartCapture**.
+1. Sit in the car and trigger **StartCapture**, from a mapped button or the plugin's page.
 2. Drive through every gear, including R and N, and rev each gear smoothly up to the limiter. Hold
    the limiter a moment so the redline flash is seen. Pit-limiter time is ignored.
    - F1: several clean climbs per gear give tighter values; the report shows the range each value lies in.

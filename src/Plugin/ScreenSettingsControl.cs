@@ -2,6 +2,7 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using LovelyCarDataCapture.Screen;
 
 namespace LovelyCarDataCapture.Plugin
@@ -25,10 +26,17 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Action<string> _say;
         private readonly TextBlock _region = new TextBlock { Margin = new Thickness(0, 6, 0, 6), TextWrapping = TextWrapping.Wrap };
         private readonly TextBlock _result = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0), Foreground = Dim };
+        private readonly TextBlock _status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
+        private readonly Func<bool> _capturing;
+        private readonly Func<string> _statusText;
+        private readonly DispatcherTimer _timer;
+        private readonly Button _start;
+        private readonly Button _stop;
 
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
                                      Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action<string> say,
-                                     Func<string> outputFolder)
+                                     Func<string> outputFolder, Action start, Action stop, Func<bool> capturing,
+                                     Func<string> status)
         {
             _settings = settings;
             _save = save;
@@ -43,11 +51,12 @@ namespace LovelyCarDataCapture.Plugin
                                     "report saying where every value came from. Nothing is uploaded. When the car is already in the " +
                                     "repo, that file is the starting point and only measured values replace its own."));
 
-            panel.Children.Add(Heading("1. Map some buttons", 16, 18));
-            panel.Children.Add(Text("In SimHub's Controls and events, map at least StartCapture and StopAndExport. ShowCaptureBox " +
-                                    "opens the capture box without coming back here, and ResetCapture throws away what has been " +
-                                    "recorded so far. For games whose lights can't be read on screen there are also MarkLed, " +
-                                    "MarkRedline and UndoMark, pressed by hand as each light comes on."));
+            panel.Children.Add(Heading("1. Map some buttons, or don't", 16, 18));
+            panel.Children.Add(Text("A capture can be started and stopped from this page, so mapping is only needed for games that " +
+                                    "stop running when they lose focus. In SimHub's Controls and events: StartCapture, StopAndExport, " +
+                                    "ShowCaptureBox, and ResetCapture to throw away what has been recorded so far. For games whose " +
+                                    "lights can't be read on screen there are also MarkLed, MarkRedline and UndoMark, pressed by hand " +
+                                    "as each light comes on."));
 
             panel.Children.Add(Heading("2. Set the game up", 16, 18));
             panel.Children.Add(Bullets(
@@ -78,7 +87,7 @@ namespace LovelyCarDataCapture.Plugin
 
             panel.Children.Add(Heading("4. Drive", 16, 18));
             panel.Children.Add(Bullets(
-                "Press StartCapture, then rev from below the first light right up to the limiter, smoothly and slowly.",
+                "Start the capture, then rev from below the first light right up to the limiter, smoothly and slowly.",
                 "Hold the limiter a second or two so the redline is seen.",
                 "Do that a few times in one or two gears you can take cleanly. Braking mid-sweep is fine: a half-caught gear " +
                 "is reported and left out rather than written down as if it were measured.",
@@ -86,8 +95,20 @@ namespace LovelyCarDataCapture.Plugin
                 "them. Only a car whose lights really do change per gear needs every gear swept.",
                 "Pit-limiter time is ignored. F1 and iRacing are read from telemetry instead of the screen."));
 
+            panel.Children.Add(Text("A game that keeps running while it hasn't got focus can be captured from here, with no buttons " +
+                                    "mapped at all: leave the car idling, start the capture, then go and drive it.", 8));
+            var captureButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+            _start = new Button { Content = "Start capture", Padding = new Thickness(14, 5, 14, 5), Margin = new Thickness(0, 0, 8, 0) };
+            _start.Click += (s, e) => { start(); Tick(); };
+            captureButtons.Children.Add(_start);
+            _stop = new Button { Content = "Stop and export", Padding = new Thickness(14, 5, 14, 5) };
+            _stop.Click += (s, e) => { stop(); Tick(); };
+            captureButtons.Children.Add(_stop);
+            panel.Children.Add(captureButtons);
+            panel.Children.Add(_status);
+
             panel.Children.Add(Heading("5. Export and check", 16, 18));
-            panel.Children.Add(Text("Press StopAndExport. The car file and its report are written to:"));
+            panel.Children.Add(Text("Stop and export, from here or from a mapped button. The car file and its report are written to:"));
             panel.Children.Add(new TextBlock
             {
                 Text = outputFolder(),
@@ -139,6 +160,22 @@ namespace LovelyCarDataCapture.Plugin
 
             Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             ShowRegion();
+
+            _capturing = capturing;
+            _statusText = status;
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _timer.Tick += (s, e) => Tick();
+            Loaded += (s, e) => { _timer.Start(); Tick(); };
+            Unloaded += (s, e) => _timer.Stop();
+        }
+
+        /// <summary>Keeps the buttons and the line under them in step with what the capture is doing.</summary>
+        private void Tick()
+        {
+            bool running = _capturing();
+            _start.IsEnabled = !running;
+            _stop.IsEnabled = running;
+            _status.Text = _statusText();
         }
 
         private static TextBlock Heading(string text, double size, double above) => new TextBlock
