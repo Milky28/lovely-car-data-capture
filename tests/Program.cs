@@ -22,6 +22,7 @@ namespace LovelyCarDataCapture.Tests
             _showReports = args.Contains("--show-reports");
             for (int i = 0; i < args.Length - 1; i++)
             {
+                if (args[i] == "--box") { ShowCaptureBox(args[i + 1]); return 0; }
                 if (args[i] != "--grab") continue;
                 GrabFromScreen(args[i + 1]);
                 return 0;

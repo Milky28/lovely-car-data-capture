@@ -277,6 +277,41 @@ namespace LovelyCarDataCapture.Tests
             }
         }
 
+        /// <summary>Shows the capture box on its own (--box x,y,w,h), to try it outside SimHub.</summary>
+        private static void ShowCaptureBox(string spec)
+        {
+            var parts = spec.Split(',');
+            var start = new PixelRect(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
+            var thread = new System.Threading.Thread(() =>
+            {
+                var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnLastWindowClose };
+                var window = new LovelyCarDataCapture.Plugin.CaptureBoxWindow(start,
+                    region => Console.WriteLine("Saved: " + region.Width + "x" + region.Height + " at " + region.X + "," + region.Y),
+                    Describe);
+                window.Show();
+                app.Run();
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+
+        private static string Describe(PixelRect region)
+        {
+            using (var grabber = new LovelyCarDataCapture.Plugin.ScreenGrabber())
+            {
+                var frame = grabber.Grab(region, out string problem);
+                if (frame == null) return "Couldn't read the screen: " + problem;
+                var blobs = new StripDetector().Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                var calibration = new StripCalibration();
+                calibration.Add(blobs);
+                var layout = calibration.Build(out _);
+                return blobs.Count + " lights lit" +
+                       (layout != null && layout.GapCount > 0 ? ", " + layout.GapCount + " gap(s) between them" : "") +
+                       (blobs.Count > 0 ? ": " + string.Join(", ", blobs.Select(b => b.Color.ToHex())) : "");
+            }
+        }
+
         private static string AudiRepoJson() => @"{
   ""carName"": ""Audi R8 LMS GT3 evo II"",
   ""carId"": ""Audi R8 LMS GT3 evo II"",

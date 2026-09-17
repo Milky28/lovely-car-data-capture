@@ -82,14 +82,22 @@ over directly.
 
 **Setting it up:**
 
-1. Open **Lovely Car Data Capture** in SimHub's left menu and tick *Read the rev lights off the screen*.
-2. Sit in the car with the lights visible, then press **Position the box…**. Drag the orange frame over
-   the rev lights, resize it from the bottom right corner, and leave a little room around them.
-3. Press **Test** to see what it finds. Rev the engine so some lights are on first; it reports how many
-   it sees, their colours, and any gaps between them. **Save** keeps the box for next time.
-4. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
+1. In SimHub's left menu, open **Additional plugins → Lovely Car Data Capture** (SimHub puts every
+   plugin's page in that group) and tick *Read the rev lights off the screen*.
+2. Sit in the car with the lights visible, then press **Position the box…**. An orange frame appears
+   with its controls just below it.
+3. Put the frame around the rev lights, a little outside them. Drag it with the mouse, or use the
+   **arrow keys** to move it and **Shift+arrows** to resize, holding Ctrl for bigger steps. The panel
+   shows what the capture sees as you rev, so you can watch the count while adjusting.
+4. **Enter** saves the box, **Esc** cancels.
+5. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
 
 The box can also be opened from a wheel button: map `LovelyCarDataCapture.ShowCaptureBox`.
+
+**A game in borderless mode hides the mouse pointer while it has focus**, so the pointer can seem to
+disappear when you click back into the game. That's why the frame works entirely from the keyboard,
+and why its reading stays live while the game has focus: the border sits just outside the region being
+read, so nothing has to be hidden to take a reading. Alt-tab brings the pointer back if you want it.
 
 **What it works out** from a few sweeps:
 

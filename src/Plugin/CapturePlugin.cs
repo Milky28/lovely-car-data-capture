@@ -36,6 +36,7 @@ namespace LovelyCarDataCapture
         private volatile string _lastMark = "";
         private string _loggedRawType;
         private readonly ScreenCaptureLoop _screen = new ScreenCaptureLoop();
+        private CaptureBoxWindow _box;
         // Set by DataUpdate so the screen thread knows whether this frame is worth recording (guarded by _lock).
         private bool _skipScreenFrame = true;
         // Latest gear and RPM seen by DataUpdate, for the mark actions (guarded by _lock).
@@ -235,15 +236,23 @@ namespace LovelyCarDataCapture
             if (_capturing && Settings.ScreenCapture) StartScreenCapture();
         }
 
+        /// <summary>Shows the capture box, or brings the one already open back to the front.</summary>
         private void ShowCaptureBoxFor(Action<PixelRect> onSave, Func<PixelRect, string> test)
         {
-            var window = new CaptureBoxWindow(SettingsBox(), region =>
+            if (_box != null)
+            {
+                _box.Activate();
+                _box.Focus();
+                return;
+            }
+            _box = new CaptureBoxWindow(SettingsBox(), region =>
             {
                 SaveCaptureBox(region);
                 onSave?.Invoke(region);
             }, test);
-            window.Show();
-            window.Activate();
+            _box.Closed += (s, e) => _box = null;
+            _box.Show();
+            _box.Activate();
         }
 
         // ---------- SimHub's settings page ----------
@@ -253,7 +262,7 @@ namespace LovelyCarDataCapture
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 
-        public System.Windows.Media.ImageSource PictureIcon => null;
+        public System.Windows.Media.ImageSource PictureIcon => LedStripIcon.Create();
 
         private void StartRepoLookup(string gameName, string carId)
         {

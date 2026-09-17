@@ -15,6 +15,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Reference Include="System.Drawing" />
+    <!-- The capture box window can be shown by hand; see the box option in Program.cs. -->
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
     <ProjectReference Include="..\LovelyCarDataCapture.csproj" />
     <!-- Copied here so the tests can run outside SimHub. -->
     <Reference Include="Newtonsoft.Json">
