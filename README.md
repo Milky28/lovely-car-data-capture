@@ -83,7 +83,8 @@ over directly.
 **Setting it up:**
 
 1. In SimHub's left menu, open **Additional plugins → Lovely Car Data Capture** (SimHub puts every
-   plugin's page in that group) and tick *Read the rev lights off the screen*.
+   plugin's page in that group). That page walks through the whole process, holds the options below,
+   and shows where exports are written; tick *Read the rev lights off the screen* to start.
 2. Sit in the car with the lights visible, then press **Position the box…**. An orange frame appears
    with its controls just below it.
 3. Put the frame around the rev lights, a little outside them. With the game in front it keeps the
@@ -107,7 +108,11 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   than the rest is a slot that never lights, and the car file needs those slots too.
 - **The RPM each light switches on at.** Every climb gives a window between the last frame the light
   was dark and the first it was lit; the value is the middle of that window, and the median across
-  climbs, so one bad frame doesn't move it.
+  climbs, so one bad frame doesn't move it. A light only ever seen already lit, or pinned down no
+  better than 150 rpm, is reported instead of written: braking mid-sweep costs you that gear, not the
+  capture.
+- **Whether the car uses one set of lights for every gear.** Two gears measured right through that
+  agree are taken as evidence it does, and the gears a track gives no room to sweep follow them.
 - **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
   washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
 - **Where the strip turns to its redline colour**, and whether it blinks there. A car that changes

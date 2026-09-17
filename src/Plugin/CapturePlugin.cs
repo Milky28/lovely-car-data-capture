@@ -276,6 +276,11 @@ namespace LovelyCarDataCapture
                                         " for the car's rev lights.");
         }
 
+        /// <summary>Where exports go. Documents can be redirected, to OneDrive among others, so this is resolved rather than assumed.</summary>
+        private string OutputFolder() => string.IsNullOrWhiteSpace(Settings.OutputFolder)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SimHub", "LovelyCarDataCapture")
+            : Settings.OutputFolder;
+
         private PixelRect SettingsBox() =>
             new PixelRect(Settings.ScreenBoxX, Settings.ScreenBoxY, Settings.ScreenBoxWidth, Settings.ScreenBoxHeight);
 
@@ -355,7 +360,7 @@ namespace LovelyCarDataCapture
         // ---------- SimHub's settings page ----------
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager) =>
             new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
-                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say);
+                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say, OutputFolder);
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 
@@ -418,9 +423,7 @@ namespace LovelyCarDataCapture
             {
                 result = ProfileComposer.Compose(session, Settings, lookup, DateTime.Now);
                 json = result.Profile.ToJson();
-                var root = string.IsNullOrWhiteSpace(Settings.OutputFolder)
-                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SimHub", "LovelyCarDataCapture")
-                    : Settings.OutputFolder;
+                var root = OutputFolder();
                 // Always named after the carId: that's the file name ATSR looks for, even when the repo's file is named differently.
                 var fileName = Slug.Make(session.CarId);
                 path = Path.Combine(root, Slug.Make(session.GameName), fileName + ".json");
