@@ -52,6 +52,12 @@ namespace LovelyCarDataCapture
         public int ScreenBoxHeight { get; set; }
         /// <summary>Frames read per second. Higher narrows each threshold a little; 30 is plenty for a slow sweep.</summary>
         public int ScreenCaptureFps { get; set; } = 30;
+
+        /// <summary>Show a panel over the game saying what the plugin is doing. Mapped buttons say nothing otherwise.</summary>
+        public bool ShowOverlay { get; set; } = true;
+        /// <summary>Where that panel sits, in screen pixels; drag it to move it. 0,0 places it top left of the main screen.</summary>
+        public int OverlayX { get; set; }
+        public int OverlayY { get; set; }
         public string RepoBranch { get; set; } = "main";
         /// <summary>
         /// Also write the export to ATSR's Developer Mode folder (&lt;SimHub&gt;\_ATSR_DevelopmentData\rpm_data)

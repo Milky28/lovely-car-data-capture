@@ -20,6 +20,7 @@ namespace LovelyCarDataCapture.Tests
             string repoData = null;
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--repo-data") repoData = args[i + 1];
             _showReports = args.Contains("--show-reports");
+            if (args.Contains("--overlay")) { ShowOverlay(); return 0; }
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--box") { ShowCaptureBox(args[i + 1]); return 0; }

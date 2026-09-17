@@ -16,16 +16,18 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Action _save;
         private readonly Func<PixelRect, string> _test;
         private readonly Action<Action<PixelRect>, Func<PixelRect, string>> _showBox;
+        private readonly Action<string> _say;
         private readonly TextBlock _region = new TextBlock { Margin = new Thickness(0, 4, 0, 4) };
         private readonly TextBlock _result = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0), Foreground = Brushes.Gray };
 
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
-                                     Action<Action<PixelRect>, Func<PixelRect, string>> showBox)
+                                     Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action<string> say)
         {
             _settings = settings;
             _save = save;
             _test = test;
             _showBox = showBox;
+            _say = say;
 
             var panel = new StackPanel { Margin = new Thickness(16) };
             panel.Children.Add(new TextBlock
@@ -78,6 +80,39 @@ namespace LovelyCarDataCapture.Plugin
                 Text = "F1 and iRacing report their lights directly, so screen reading is skipped for them. " +
                        "The pit limiter is ignored, as it drives its own patterns.",
             });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "While you drive",
+                FontSize = 18,
+                Margin = new Thickness(0, 24, 0, 8),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+                Text = "Buttons mapped in Controls and events are pressed with the game in front of everything, " +
+                       "so the plugin can show a small panel over it: what each button did, and how the capture " +
+                       "is going. Drag the panel anywhere; it stays where you put it and never takes focus.",
+            });
+
+            var overlay = new CheckBox
+            {
+                Content = "Show the panel over the game",
+                IsChecked = settings.ShowOverlay,
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            overlay.Checked += (s, e) => { _settings.ShowOverlay = true; _save(); };
+            overlay.Unchecked += (s, e) => { _settings.ShowOverlay = false; _save(); };
+            panel.Children.Add(overlay);
+
+            var preview = new Button { Content = "Show it now", Padding = new Thickness(12, 4, 12, 4), HorizontalAlignment = HorizontalAlignment.Left };
+            preview.Click += (s, e) =>
+            {
+                if (_settings.ShowOverlay) _say("This is the panel. It appears over the game when you press a mapped button.");
+                else _result.Text = "Tick the box above first.";
+            };
+            panel.Children.Add(preview);
 
             Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             ShowRegion();

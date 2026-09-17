@@ -37,6 +37,7 @@ namespace LovelyCarDataCapture
         private string _loggedRawType;
         private readonly ScreenCaptureLoop _screen = new ScreenCaptureLoop();
         private CaptureBoxWindow _box;
+        private CaptureOverlay _overlay;
         // Set by DataUpdate so the screen thread knows whether this frame is worth recording (guarded by _lock).
         private bool _skipScreenFrame = true;
         // Latest gear and RPM seen by DataUpdate, for the mark actions (guarded by _lock).
@@ -67,7 +68,13 @@ namespace LovelyCarDataCapture
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
             this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => StopAndExport());
-            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => { lock (_lock) { _session = null; _lookup = null; _skipScreenFrame = true; } _repoStatus = ""; _lastMark = ""; });
+            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) =>
+            {
+                lock (_lock) { _session = null; _lookup = null; _skipScreenFrame = true; }
+                _repoStatus = "";
+                _lastMark = "";
+                Say("Capture cleared. Nothing is being recorded.");
+            });
             // For games that don't report their LEDs: press as each in-game light comes on while revving slowly.
             this.AddAction(actionName: "MarkLed", actionStart: (pm, _) => Mark(redline: false));
             this.AddAction(actionName: "MarkRedline", actionStart: (pm, _) => Mark(redline: true));
@@ -97,6 +104,7 @@ namespace LovelyCarDataCapture
                 }
             }
             _lastMark = message;
+            Say(message);
             SimHub.Logging.Current.Info(LogPrefix + "Mark: " + message);
         }
 
@@ -105,6 +113,7 @@ namespace LovelyCarDataCapture
             string removed;
             lock (_lock) removed = _session?.Marks.Undo();
             _lastMark = removed == null ? "Nothing to undo" : "Removed " + removed;
+            Say(_lastMark);
             SimHub.Logging.Current.Info(LogPrefix + _lastMark);
         }
 
@@ -165,7 +174,77 @@ namespace LovelyCarDataCapture
         public void End(PluginManager pluginManager)
         {
             _screen.Stop();
+            CloseOverlay();
             this.SaveCommonSettings("CaptureSettings", Settings);
+        }
+
+        // ---------- the panel over the game ----------
+        /// <summary>
+        /// Says what just happened, on screen and over the game. Mapped buttons are pressed with the
+        /// game in front of everything, where neither SimHub's window nor its log can be seen.
+        /// </summary>
+        private void Say(string message)
+        {
+            if (!Settings.ShowOverlay) return;
+            OnUiThread(() =>
+            {
+                EnsureOverlay();
+                _overlay?.Message(message);
+            });
+        }
+
+        private void ShowOverlay(bool capturing)
+        {
+            if (!Settings.ShowOverlay) return;
+            OnUiThread(() =>
+            {
+                EnsureOverlay();
+                _overlay?.SetCapturing(capturing);
+            });
+        }
+
+        private void CloseOverlay() => OnUiThread(() =>
+        {
+            _overlay?.Close();
+            _overlay = null;
+        });
+
+        private void EnsureOverlay()
+        {
+            if (_overlay != null) return;
+            _overlay = new CaptureOverlay(OverlayStatus, (x, y) =>
+            {
+                Settings.OverlayX = x;
+                Settings.OverlayY = y;
+            }, Settings.OverlayX, Settings.OverlayY);
+            _overlay.Closed += (s, e) => _overlay = null;
+        }
+
+        private static void OnUiThread(Action action)
+        {
+            var app = System.Windows.Application.Current;
+            if (app == null) return;
+            if (app.Dispatcher.CheckAccess()) action();
+            else app.Dispatcher.BeginInvoke(action);
+        }
+
+        /// <summary>The line the panel keeps up to date while driving.</summary>
+        private string OverlayStatus()
+        {
+            lock (_lock)
+            {
+                if (!_capturing) return _session == null ? "Not capturing" : "Stopped. " + DescribeProgress(_session);
+                if (_session == null) return "Waiting for the car…";
+
+                var parts = new List<string>();
+                parts.Add(string.IsNullOrEmpty(_currentGear) ? "gear ?" : "gear " + _currentGear);
+                parts.Add(_currentRpm + " rpm");
+                if (Settings.ScreenCapture && _screen.IsRunning) parts.Add(_screen.LightsSeen + " lights lit");
+                var progress = DescribeProgress(_session);
+                if (!string.IsNullOrEmpty(progress)) parts.Add(progress);
+                else parts.Add("no LED data yet");
+                return "Recording · " + string.Join(" · ", parts);
+            }
         }
 
         private void StartCapture()
@@ -174,6 +253,10 @@ namespace LovelyCarDataCapture
             _repoStatus = "";
             _capturing = true;
             StartScreenCapture();
+            ShowOverlay(true);
+            Say(Settings.ScreenCapture && _screen.IsRunning
+                ? "Capture started, watching the rev lights on screen. Rev slowly from idle to the limiter a few times."
+                : "Capture started. Drive through every gear and rev each one to the limiter.");
             SimHub.Logging.Current.Info(LogPrefix + "Capture started. Drive through every gear and rev each one to the limiter.");
         }
 
@@ -185,6 +268,7 @@ namespace LovelyCarDataCapture
             {
                 SimHub.Logging.Current.Warn(LogPrefix + "Reading the lights off the screen is on, but no capture box has been placed. " +
                                             "Open the plugin's page in SimHub and position it.");
+                Say("No capture box has been placed yet, so the rev lights can't be read. Open the plugin's page in SimHub, or press the ShowCaptureBox button.");
                 return;
             }
             _screen.Start(box, Settings.ScreenCaptureFps);
@@ -224,14 +308,21 @@ namespace LovelyCarDataCapture
             });
         }
 
-        private void SaveCaptureBox(PixelRect region)
+        /// <summary>
+        /// Stores the box. The window saves as it is dragged, so this runs often; the capture only
+        /// picks the new box up once the window is done, which is when <paramref name="final"/> is set.
+        /// </summary>
+        private void SaveCaptureBox(PixelRect region, bool final)
         {
             Settings.ScreenBoxX = region.X;
             Settings.ScreenBoxY = region.Y;
             Settings.ScreenBoxWidth = region.Width;
             Settings.ScreenBoxHeight = region.Height;
             this.SaveCommonSettings("CaptureSettings", Settings);
+            if (!final) return;
+
             SimHub.Logging.Current.Info(LogPrefix + "Capture box set to " + region.Width + "x" + region.Height + " at " + region.X + "," + region.Y + ".");
+            Say("Capture box saved: " + region.Width + " x " + region.Height + " at " + region.X + ", " + region.Y + ".");
             // Already capturing: pick the new box up straight away.
             if (_capturing && Settings.ScreenCapture) StartScreenCapture();
         }
@@ -245,12 +336,18 @@ namespace LovelyCarDataCapture
                 _box.Focus();
                 return;
             }
-            _box = new CaptureBoxWindow(SettingsBox(), region =>
+            _box = new CaptureBoxWindow(SettingsBox(), region => SaveCaptureBox(region, final: false), test);
+            _box.Closed += (s, e) =>
             {
-                SaveCaptureBox(region);
-                onSave?.Invoke(region);
-            }, test);
-            _box.Closed += (s, e) => _box = null;
+                var window = _box;
+                _box = null;
+                if (window != null)
+                {
+                    var region = window.LastRegion;
+                    SaveCaptureBox(region, final: true);
+                    onSave?.Invoke(region);
+                }
+            };
             _box.Show();
             _box.Activate();
         }
@@ -258,7 +355,7 @@ namespace LovelyCarDataCapture
         // ---------- SimHub's settings page ----------
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager) =>
             new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
-                                      region => _screen.Describe(region), ShowCaptureBoxFor);
+                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say);
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 
@@ -288,6 +385,7 @@ namespace LovelyCarDataCapture
         {
             _capturing = false;
             _screen.Stop();
+            ShowOverlay(false);
 
             CaptureSession session;
             Task<RepoLookup> lookupTask;
@@ -299,8 +397,11 @@ namespace LovelyCarDataCapture
             if (session == null)
             {
                 SimHub.Logging.Current.Warn(LogPrefix + "Nothing captured - start a capture and drive first.");
+                Say("Nothing was captured. Press StartCapture, then drive.");
+                ShowOverlay(false);
                 return;
             }
+            Say("Exporting " + session.CarId + "…");
 
             RepoLookup lookup = null;
             if (lookupTask != null)
@@ -338,10 +439,15 @@ namespace LovelyCarDataCapture
                 _lastReportPath = reportPath;
                 SimHub.Logging.Current.Info(LogPrefix + "Exported " + path + " (" + result.Source + "). Report: " + reportPath);
                 foreach (var problem in result.AtsrProblems) SimHub.Logging.Current.Warn(LogPrefix + "ATSR: " + problem);
+                Say("Saved " + Path.GetFileName(path) + " to " + Path.GetDirectoryName(path) + "." +
+                    " From " + result.Source + "." +
+                    (result.AtsrProblems.Count > 0 ? " " + result.AtsrProblems.Count + " ATSR warning(s) in the report." : "") +
+                    " Read the report before submitting.");
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Error(LogPrefix + "Export failed for " + path, ex);
+                Say("Export failed: " + ex.Message);
             }
         }
 

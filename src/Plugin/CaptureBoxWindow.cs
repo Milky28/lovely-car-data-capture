@@ -29,12 +29,32 @@ namespace LovelyCarDataCapture.Plugin
     /// the frame is still up: the panel then shows what the capture would see, live, and the game can
     /// keep focus while the engine is revved.
     /// </para>
+    /// <para>
+    /// A game in front takes the keyboard with it, so plain arrow keys and Enter only reach this window
+    /// when it has focus. The same moves are registered as system-wide hotkeys on Ctrl+Alt, which reach
+    /// it whatever is in front, and the region is saved as it changes so nothing depends on a keypress
+    /// landing here at all.
+    /// </para>
     /// </remarks>
     internal sealed class CaptureBoxWindow : Window
     {
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetWindowRect(IntPtr hWnd, out Rect32 rect);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint key);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private const int WmHotkey = 0x0312;
+        private const uint ModAlt = 0x0001, ModControl = 0x0002, ModShift = 0x0004;
+        private const uint VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28, VkReturn = 0x0D;
+        /// <summary>Hotkey steps are coarser than the arrow keys: they're for getting close, not fine work.</summary>
+        private const int HotkeyStep = 4;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct Rect32 { public int Left, Top, Right, Bottom; }
@@ -45,7 +65,10 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Action<PixelRect> _onSave;
         private readonly Func<PixelRect, string> _test;
         private readonly System.Windows.Threading.DispatcherTimer _preview;
+        private readonly System.Windows.Threading.DispatcherTimer _autoSave;
+        private readonly PixelRect _started;
         private bool _reading;
+        private bool _hotkeys;
         private readonly Window _panel;
         private readonly TextBlock _status;
         private readonly TextBlock _size;
@@ -54,6 +77,7 @@ namespace LovelyCarDataCapture.Plugin
         {
             _onSave = onSave;
             _test = test;
+            _started = start;
 
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
@@ -99,8 +123,8 @@ namespace LovelyCarDataCapture.Plugin
 
             MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
             KeyDown += OnKey;
-            LocationChanged += (s, e) => PlacePanel();
-            SizeChanged += (s, e) => { PlacePanel(); ShowSize(); };
+            LocationChanged += (s, e) => { PlacePanel(); Changed(); };
+            SizeChanged += (s, e) => { PlacePanel(); ShowSize(); Changed(); };
             Closed += (s, e) => _panel.Close();
 
             _status = new TextBlock
@@ -109,15 +133,15 @@ namespace LovelyCarDataCapture.Plugin
                 TextWrapping = TextWrapping.Wrap,
                 Width = 420,
                 Margin = new Thickness(0, 0, 0, 6),
-                Text = "Put the frame over the car's rev lights, just outside them. Drag it with the mouse, or move it " +
-                       "with the arrow keys and resize it with Shift+arrows (hold Ctrl for bigger steps). Enter saves, " +
-                       "Esc cancels. The line below updates as you rev, even while the game has focus.",
+                Text = "Put the frame over the car's rev lights, just outside them. With the game in front, use " +
+                       "Ctrl+Alt+arrows to move it and Ctrl+Alt+Shift+arrows to resize; Ctrl+Alt+Enter finishes. " +
+                       "Click this panel first and plain arrows work too, a pixel at a time. It saves as you go.",
             };
             _size = new TextBlock { Foreground = Brushes.Gray, Margin = new Thickness(0, 6, 0, 0) };
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-            buttons.Children.Add(MakeButton("Save (Enter)", (s, e) => Save()));
-            buttons.Children.Add(MakeButton("Cancel (Esc)", (s, e) => Close()));
+            buttons.Children.Add(MakeButton("Done (Ctrl+Alt+Enter)", (s, e) => Save()));
+            buttons.Children.Add(MakeButton("Undo changes", (s, e) => Revert()));
 
             var contents = new StackPanel { Margin = new Thickness(10) };
             contents.Children.Add(_status);
@@ -143,7 +167,12 @@ namespace LovelyCarDataCapture.Plugin
 
             _preview = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
             _preview.Tick += (s, e) => Read();
-            Closed += (s, e) => _preview.Stop();
+
+            // Saved a moment after the frame stops moving, so dragging it doesn't write the settings
+            // file on every pixel.
+            _autoSave = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _autoSave.Tick += (s, e) => { _autoSave.Stop(); _onSave(Region()); ShowSize(); };
+            Closed += (s, e) => { _preview.Stop(); _autoSave.Stop(); };
 
             Loaded += (s, e) =>
             {
@@ -181,7 +210,67 @@ namespace LovelyCarDataCapture.Plugin
         private void ShowSize()
         {
             var r = Region();
-            _size.Text = r.Width + " x " + r.Height + " pixels at " + r.X + ", " + r.Y;
+            _size.Text = r.Width + " x " + r.Height + " pixels at " + r.X + ", " + r.Y +
+                         (_autoSave.IsEnabled ? " - saving…" : " - saved") +
+                         (_hotkeys ? "" : "  (Ctrl+Alt shortcuts are taken by something else)");
+        }
+
+        private void Changed()
+        {
+            if (!IsLoaded) return;
+            _autoSave.Stop();
+            _autoSave.Start();
+        }
+
+        /// <summary>Puts the frame back where it was when it opened, and saves that.</summary>
+        private void Revert()
+        {
+            if (_started.Width < 8) { Close(); return; }
+            Left = _started.X - BorderWidth;
+            Top = _started.Y - BorderWidth;
+            Width = _started.Width + BorderWidth * 2;
+            Height = _started.Height + BorderWidth * 2;
+            _onSave(Region());
+            ShowSize();
+        }
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            var source = (HwndSource)PresentationSource.FromVisual(this);
+            source.AddHook(OnWindowMessage);
+            var handle = source.Handle;
+            // Ctrl+Alt so a game's own controls are left alone; Shift on top of that resizes.
+            _hotkeys = RegisterHotKey(handle, 1, ModControl | ModAlt, VkLeft)
+                       & RegisterHotKey(handle, 2, ModControl | ModAlt, VkRight)
+                       & RegisterHotKey(handle, 3, ModControl | ModAlt, VkUp)
+                       & RegisterHotKey(handle, 4, ModControl | ModAlt, VkDown)
+                       & RegisterHotKey(handle, 5, ModControl | ModAlt | ModShift, VkLeft)
+                       & RegisterHotKey(handle, 6, ModControl | ModAlt | ModShift, VkRight)
+                       & RegisterHotKey(handle, 7, ModControl | ModAlt | ModShift, VkUp)
+                       & RegisterHotKey(handle, 8, ModControl | ModAlt | ModShift, VkDown)
+                       & RegisterHotKey(handle, 9, ModControl | ModAlt, VkReturn);
+            Closed += (s, args) => { for (int id = 1; id <= 9; id++) UnregisterHotKey(handle, id); };
+        }
+
+        private IntPtr OnWindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (message != WmHotkey) return IntPtr.Zero;
+            switch (wParam.ToInt32())
+            {
+                case 1: Move(-HotkeyStep, 0, false); break;
+                case 2: Move(HotkeyStep, 0, false); break;
+                case 3: Move(0, -HotkeyStep, false); break;
+                case 4: Move(0, HotkeyStep, false); break;
+                case 5: Move(-HotkeyStep, 0, true); break;
+                case 6: Move(HotkeyStep, 0, true); break;
+                case 7: Move(0, -HotkeyStep, true); break;
+                case 8: Move(0, HotkeyStep, true); break;
+                case 9: Save(); break;
+                default: return IntPtr.Zero;
+            }
+            handled = true;
+            return IntPtr.Zero;
         }
 
         /// <summary>Reads the region and shows what the capture would make of it right now.</summary>
@@ -228,6 +317,12 @@ namespace LovelyCarDataCapture.Plugin
         }
 
         /// <summary>
+        /// The region as it was last read, which stays valid after the window is gone: Win32 has no
+        /// rectangle to give once the handle is destroyed.
+        /// </summary>
+        public PixelRect LastRegion { get; private set; }
+
+        /// <summary>
         /// The captured region in real screen pixels: the window minus its border, which is drawn
         /// outside what gets read. Taken from Win32 so display scaling needs no arithmetic.
         /// </summary>
@@ -241,12 +336,14 @@ namespace LovelyCarDataCapture.Plugin
             int width = r.Right - r.Left, height = r.Bottom - r.Top;
             double scale = ActualWidth > 0 ? width / ActualWidth : 1.0;
             int border = (int)Math.Round(BorderWidth * scale);
-            return new PixelRect(r.Left + border, r.Top + border,
-                                 Math.Max(1, width - border * 2), Math.Max(1, height - border * 2));
+            LastRegion = new PixelRect(r.Left + border, r.Top + border,
+                                       Math.Max(1, width - border * 2), Math.Max(1, height - border * 2));
+            return LastRegion;
         }
 
         private void Save()
         {
+            _autoSave.Stop();
             _onSave(Region());
             Close();
         }

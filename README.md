@@ -86,18 +86,20 @@ over directly.
    plugin's page in that group) and tick *Read the rev lights off the screen*.
 2. Sit in the car with the lights visible, then press **Position the box…**. An orange frame appears
    with its controls just below it.
-3. Put the frame around the rev lights, a little outside them. Drag it with the mouse, or use the
-   **arrow keys** to move it and **Shift+arrows** to resize, holding Ctrl for bigger steps. The panel
-   shows what the capture sees as you rev, so you can watch the count while adjusting.
-4. **Enter** saves the box, **Esc** cancels.
+3. Put the frame around the rev lights, a little outside them. With the game in front it keeps the
+   keyboard, so use the system-wide shortcuts: **Ctrl+Alt+arrows** move the frame, **Ctrl+Alt+Shift+arrows**
+   resize it, **Ctrl+Alt+Enter** finishes. Click the panel first and plain arrows work too, a pixel at a
+   time. The panel shows what the capture sees as you rev, so you can watch the count while adjusting.
+4. The box is **saved as you move it** - the panel says so - and *Undo changes* puts it back where it
+   started. Nothing depends on a keypress reaching the right window.
 5. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
 
 The box can also be opened from a wheel button: map `LovelyCarDataCapture.ShowCaptureBox`.
 
-**A game in borderless mode hides the mouse pointer while it has focus**, so the pointer can seem to
-disappear when you click back into the game. That's why the frame works entirely from the keyboard,
-and why its reading stays live while the game has focus: the border sits just outside the region being
-read, so nothing has to be hidden to take a reading. Alt-tab brings the pointer back if you want it.
+**A game in borderless mode hides the mouse pointer and takes the keyboard while it has focus.** That's
+why the frame has system-wide shortcuts and saves itself as it moves, and why its reading stays live
+while the game is in front: the border sits just outside the region being read, so nothing has to be
+hidden to take a reading. Alt-tab brings the pointer back if you want it.
 
 **What it works out** from a few sweeps:
 
@@ -140,6 +142,21 @@ LMS GT3 evo II, and the tests check the values it produces against that car's fi
 that a recording reads the RPM off the screen, where a SimHub overlay lags the game by a frame or two
 and so reads about 15 rpm low while the revs climb; live capture takes RPM from telemetry and doesn't.
 
+### Watching it while you drive
+
+Mapped buttons are pressed with the game covering everything, so the plugin shows a small panel over it:
+what the button just did, and how the capture is going. It appears when a capture starts, on every
+button press, and for a few seconds after. Drag it anywhere - it stays put and never takes focus, so it
+can't pull the game out of the foreground.
+
+- **StartCapture:** says whether the rev lights are being watched, or asks for a capture box if none is set.
+- **While driving:** gear, RPM, lights lit and how much has been captured so far.
+- **MarkLed / MarkRedline / UndoMark:** the step and the RPM recorded.
+- **StopAndExport:** where the file went, what the values came from, and whether the report has ATSR warnings.
+
+Untick *Show the panel over the game* on the plugin's page to turn it off; `ShowOverlay` in the settings
+file does the same.
+
 ### Marking lights by hand
 
 For games that don't report their LEDs (AMS2, LMU, ACC, AC, PMR, RaceRoom, …):
@@ -172,6 +189,8 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
 | `ScreenCaptureFps` | `30` | Frames read per second. |
+| `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
+| `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |
 | `LedNumber` | `12` | LED count for new cars in games without LED data. |
 | `FirstLedPercent` / `LastLedPercent` | `72` / `97.5` | Estimate spread for games without LED data. |

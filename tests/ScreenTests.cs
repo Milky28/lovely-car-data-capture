@@ -296,6 +296,28 @@ namespace LovelyCarDataCapture.Tests
             thread.Join();
         }
 
+        /// <summary>Shows the overlay panel on its own (--overlay), to see it outside SimHub.</summary>
+        private static void ShowOverlay()
+        {
+            var thread = new System.Threading.Thread(() =>
+            {
+                var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+                int rpm = 6200;
+                var overlay = new LovelyCarDataCapture.Plugin.CaptureOverlay(
+                    () => "Recording - gear 3 - " + (rpm += 37) + " rpm - 7 lights lit - 1420 frames, up to 10 lights at once",
+                    (x, y) => Console.WriteLine("Moved to " + x + "," + y), 0, 0);
+                overlay.SetCapturing(true);
+                overlay.Message("Capture started, watching the rev lights on screen. Rev slowly from idle to the limiter a few times.");
+                var quit = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+                quit.Tick += (s, e) => app.Shutdown();
+                quit.Start();
+                app.Run();
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+
         private static string Describe(PixelRect region)
         {
             using (var grabber = new LovelyCarDataCapture.Plugin.ScreenGrabber())
