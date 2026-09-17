@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Frames and a recording from a real capture; see ScreenTests.cs. -->
+    <Content Include="data\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Reference Include="System.Drawing" />
     <ProjectReference Include="..\LovelyCarDataCapture.csproj" />
     <!-- Copied here so the tests can run outside SimHub. -->
     <Reference Include="Newtonsoft.Json">

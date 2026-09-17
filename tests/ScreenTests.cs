@@ -1,0 +1,261 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using LovelyCarDataCapture.Capture;
+using LovelyCarDataCapture.Profile;
+using LovelyCarDataCapture.Repo;
+using LovelyCarDataCapture.Screen;
+
+namespace LovelyCarDataCapture.Tests
+{
+    /// <summary>
+    /// Tests for reading rev lights off the screen, run against a real recording: a two minute clip of
+    /// the AMS2 Audi R8 LMS GT3 evo II revved to the limiter three times in neutral, at 5120x1440.
+    /// data/ams2-audi-r8-lms-gt3-evo-ii.csv holds what the detector found in each frame of it with the
+    /// RPM shown on screen at the time, and the three PNGs are single frames from the same clip.
+    /// </summary>
+    internal static partial class Program
+    {
+        /// <summary>The car's values in the repo, LED 1..12 (0 = gap), redline last.</summary>
+        private static readonly int[] AudiFileRpm = { 7000, 7115, 0, 7230, 7345, 7460, 7575, 7690, 7805, 0, 7920, 8035 };
+        private const int AudiFileRedline = 8150;
+
+        private static string DataPath(string name) => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", name);
+
+        private static PixelFrame LoadFrame(string name)
+        {
+            using (var bmp = new Bitmap(DataPath(name)))
+            {
+                var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+                var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                try
+                {
+                    var bytes = new byte[data.Stride * bmp.Height];
+                    Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                    return PixelFrame.Bgra32(bytes, bmp.Width, bmp.Height, data.Stride);
+                }
+                finally { bmp.UnlockBits(data); }
+            }
+        }
+
+        private sealed class RecordedFrame
+        {
+            public string Gear;
+            public int Rpm;
+            public long TimeMs;
+            public List<LitBlob> Blobs = new List<LitBlob>();
+        }
+
+        private static List<RecordedFrame> LoadRecording()
+        {
+            var frames = new List<RecordedFrame>();
+            foreach (var line in File.ReadLines(DataPath("ams2-audi-r8-lms-gt3-evo-ii.csv")).Skip(1))
+            {
+                var cells = line.Split(',');
+                if (cells.Length < 5) continue;
+                var f = new RecordedFrame
+                {
+                    TimeMs = long.Parse(cells[1], CultureInfo.InvariantCulture),
+                    Gear = cells[2],
+                    Rpm = int.Parse(cells[3], CultureInfo.InvariantCulture),
+                };
+                foreach (var blob in cells[4].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var p = blob.Split(':');
+                    int x = int.Parse(p[0], CultureInfo.InvariantCulture);
+                    f.Blobs.Add(new LitBlob
+                    {
+                        Left = x - 9,
+                        Right = x + 9,
+                        Color = new LedColor(int.Parse(p[1], CultureInfo.InvariantCulture),
+                                             int.Parse(p[2], CultureInfo.InvariantCulture),
+                                             int.Parse(p[3], CultureInfo.InvariantCulture)),
+                    });
+                }
+                frames.Add(f);
+            }
+            return frames;
+        }
+
+        private static ScreenLedResult CaptureRecording()
+        {
+            var capture = new ScreenLedCapture();
+            foreach (var f in LoadRecording()) capture.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            return capture.Result();
+        }
+
+        // ---------- the detector, on real frames ----------
+        private static void ScreenDetectorOnFrames()
+        {
+            var detector = new StripDetector();
+            var region = new PixelRect(0, 0, 440, 100);
+
+            Equal(0, detector.Detect(LoadFrame("strip-dark.png"), region).Count, "lights lit at idle");
+
+            var partial = detector.Detect(LoadFrame("strip-partial.png"), region);
+            Equal(7, partial.Count, "lights lit at 7667 rpm");
+            Check(partial.All(b => b.Width >= 12 && b.Width <= 24), "each light is about 18px wide, got " +
+                  string.Join(", ", partial.Select(b => b.Width)));
+            // Green first, then yellow: hue falls from left to right along the strip.
+            Check(partial[0].Color.Hue > partial[6].Color.Hue + 20,
+                  "the leftmost light is greener than the last lit one (" + partial[0].Color + " vs " + partial[6].Color + ")");
+
+            var full = detector.Detect(LoadFrame("strip-full.png"), region);
+            Equal(10, full.Count, "lights lit above the redline");
+            Check(full.All(b => b.Color.Hue < 30), "every light is red above the redline");
+            var spacing = Enumerable.Range(1, full.Count - 1).Select(i => full[i].CenterX - full[i - 1].CenterX).ToList();
+            Equal(2, spacing.Count(s => s > 40), "two gaps in the strip, spacings: " +
+                  string.Join(", ", spacing.Select(s => s.ToString("0", CultureInfo.InvariantCulture))));
+        }
+
+        // ---------- the strip's shape ----------
+        private static void ScreenCalibration()
+        {
+            var calibration = new StripCalibration();
+            foreach (var f in LoadRecording()) calibration.Add(f.Blobs);
+            var layout = calibration.Build(out string problem);
+            Check(layout != null, "the strip was made out: " + problem);
+            Equal(12, layout.LedNumber, "slots on the strip");
+            Equal(2, layout.GapCount, "gaps on the strip");
+            Check(layout.IsGap[2] && layout.IsGap[9], "gaps are LED 3 and LED 10, got " +
+                  string.Join(", ", Enumerable.Range(0, 12).Where(i => layout.IsGap[i]).Select(i => i + 1)));
+            Check(layout.Pitch > 20 && layout.Pitch < 32, "spacing is about 26px, got " + layout.Pitch.ToString("0.0", CultureInfo.InvariantCulture));
+        }
+
+        // ---------- thresholds, colours, redline ----------
+        private static void ScreenThresholdsMatchRepoFile()
+        {
+            var result = CaptureRecording();
+            Check(result.Layout != null, "the strip was made out");
+            Equal(1, result.Gears.Count, "gears captured");
+
+            var leds = result.Gears[0].Leds;
+            var offsets = new List<int>();
+            for (int i = 0; i < 12; i++)
+            {
+                if (AudiFileRpm[i] == 0) { Check(leds[i] == null, "LED " + (i + 1) + " is a gap and never lit"); continue; }
+                Check(leds[i] != null, "LED " + (i + 1) + " was seen lit");
+                int diff = leds[i].Rpm - AudiFileRpm[i];
+                offsets.Add(diff);
+                Check(Math.Abs(diff) <= 60, "LED " + (i + 1) + " measured " + leds[i].Rpm + ", repo says " + AudiFileRpm[i] + " (" + diff.ToString("+#;-#;0") + ")");
+            }
+            // Every value reads a little low because the RPM on screen lags the game by a frame or two.
+            Check(offsets.Average() < 0 && offsets.Average() > -40, "readings sit just below the file's values, average " +
+                  offsets.Average().ToString("0", CultureInfo.InvariantCulture));
+
+            Check(result.RedlineRpm.HasValue, "the redline colour change was found");
+            Check(Math.Abs(result.RedlineRpm.Value - AudiFileRedline) <= 60,
+                  "redline measured " + result.RedlineRpm + ", repo says " + AudiFileRedline);
+            Equal("#FFFF0000", result.RedlineColor, "redline colour");
+            Check(!result.BlinkSeen, "the strip doesn't blink at the limiter");
+        }
+
+        private static void ScreenColorsAreGrouped()
+        {
+            var result = CaptureRecording();
+            var groups = result.ColorGroups;
+            Equal(4, groups.Count, "four colours were told apart");
+            string ColorOf(int led) => groups.First(g => g.Slots.Contains(led - 1)).Hex;
+            // The same colours the repo file states, worked out from the screen alone.
+            foreach (int led in new[] { 1, 2, 4, 5 }) Equal("#FF00FF00", ColorOf(led), "LED " + led + " is green");
+            foreach (int led in new[] { 6, 7 }) Equal("#FFFFFF00", ColorOf(led), "LED " + led + " is yellow");
+            foreach (int led in new[] { 8, 9 }) Equal("#FFFF8000", ColorOf(led), "LED " + led + " is orange");
+            foreach (int led in new[] { 11, 12 }) Equal("#FFFF0000", ColorOf(led), "LED " + led + " is red");
+            Check(groups.All(g => g.Slots.All(s => s != 2 && s != 9)), "gaps have no colour");
+        }
+
+        // ---------- into a car file ----------
+        private static void ComposeScreenIntoRepoFile()
+        {
+            var session = new CaptureSession("Automobilista2", "Audi R8 LMS GT3 evo II");
+            foreach (var f in LoadRecording()) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+
+            var lookup = new RepoLookup
+            {
+                Status = RepoLookupStatus.Found,
+                RelativePath = "automobilista2/audi-r8-lms-gt3-evo-ii.json",
+                Text = AudiRepoJson(),
+            };
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), lookup, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+
+            var p = result.Profile;
+            Check(result.Source.Contains("screen"), "the report says where the values came from: " + result.Source);
+            Equal(12, p.LedNumber, "LED count is unchanged");
+            var row = p.LedRpm["N"];
+            for (int i = 1; i <= 12; i++)
+            {
+                if (AudiFileRpm[i - 1] == 0) { Equal(0, row[i], "LED " + i + " stays a gap"); continue; }
+                Check(Math.Abs(row[i] - AudiFileRpm[i - 1]) <= 60, "LED " + i + " is close to the repo value: " + row[i]);
+            }
+            Check(Math.Abs(row[0] - AudiFileRedline) <= 60, "the redline is close to the repo value: " + row[0]);
+            Equal("#FF00FF00", p.LedColor[1], "the repo file's colours are kept");
+            Equal("#00000000", p.LedColor[3], "the gap colour is kept");
+            Equal(0, p.RedlineBlinkInterval, "no blink was measured, so the file's 0 stays");
+            Check(!p.GearOrder.Contains("3") || p.LedRpm["3"].SequenceEqual(p.LedRpm["N"]) || p.LedRpm["3"][1] == AudiFileRpm[0],
+                  "gears that weren't driven keep the repo values");
+            Check(result.AtsrProblems.Count == 0, "no ATSR problems: " + string.Join("; ", result.AtsrProblems));
+        }
+
+        /// <summary>A new car has no file to follow, so the strip, colours and gaps all come from the screen.</summary>
+        private static void ComposeScreenNewCar()
+        {
+            var session = new CaptureSession("Automobilista2", "Some New Car");
+            session.RecordCar("Some New Car", "GT3");
+            foreach (var f in LoadRecording()) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 17));
+            var p = result.Profile;
+            Equal(12, p.LedNumber, "the strip's slots became the LED count");
+            Equal("#00000000", p.LedColor[3], "LED 3 is written as a gap");
+            Equal("#00000000", p.LedColor[10], "LED 10 is written as a gap");
+            Equal("#FF00FF00", p.LedColor[1], "LED 1 is green");
+            Equal("#FFFF0000", p.LedColor[12], "LED 12 is red");
+            Equal(0, p.LedRpm["N"][3], "a gap has no RPM");
+            Check(p.LedRpm["N"][1] > 6900 && p.LedRpm["N"][1] < 7100, "LED 1 is around 7000 rpm, got " + p.LedRpm["N"][1]);
+        }
+
+        /// <summary>Colours read off a screen are washed out, so they are matched by their order, not their hue.</summary>
+        private static void ScreenPaletteNaming()
+        {
+            // Measured in the recording: pure green renders as rgb(138,177,106), red as rgb(190,96,60).
+            var colors = new[]
+            {
+                new LedColor(138, 177, 106), new LedColor(138, 177, 106),
+                new LedColor(0, 0, 0),
+                new LedColor(187, 173, 92), new LedColor(189, 162, 85),
+                new LedColor(190, 96, 60),
+            };
+            var gaps = new[] { false, false, true, false, false, false };
+            var groups = LedPalette.Group(colors, gaps, new LedColor(190, 96, 60).Hue);
+            Equal(4, groups.Count, "four colours were told apart");
+            Equal("#FFFF0000", groups.First(g => g.Slots.Contains(5)).Hex, "the reddest colour is red");
+            Equal("#FF00FF00", groups.First(g => g.Slots.Contains(0)).Hex, "the furthest colour from it is green");
+            Equal("#FFFFFF00", groups.First(g => g.Slots.Contains(3)).Hex, "the one below green is yellow");
+            Equal("#FFFF8000", groups.First(g => g.Slots.Contains(4)).Hex, "the one above red is orange");
+            Check(groups.All(g => !g.Slots.Contains(2)), "the gap has no colour");
+        }
+
+        private static string AudiRepoJson() => @"{
+  ""carName"": ""Audi R8 LMS GT3 evo II"",
+  ""carId"": ""Audi R8 LMS GT3 evo II"",
+  ""carClass"": ""GT3"",
+  ""ledNumber"": 12,
+  ""redlineBlinkInterval"": 0,
+  ""ledColor"": [""#FFFF0000"",""#FF00FF00"",""#FF00FF00"",""#00000000"",""#FF00FF00"",""#FF00FF00"",""#FFFFFF00"",""#FFFFFF00"",""#FFFF8000"",""#FFFF8000"",""#00000000"",""#FFFF0000"",""#FFFF0000""],
+  ""ledRpm"": [
+    {
+      ""R"": [8150,7000,7115,0,7230,7345,7460,7575,7690,7805,0,7920,8035],
+      ""N"": [8150,7000,7115,0,7230,7345,7460,7575,7690,7805,0,7920,8035],
+      ""1"": [8150,7000,7115,0,7230,7345,7460,7575,7690,7805,0,7920,8035],
+      ""2"": [8150,7000,7115,0,7230,7345,7460,7575,7690,7805,0,7920,8035]
+    }
+  ]
+}";
+    }
+}

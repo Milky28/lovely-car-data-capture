@@ -10,6 +10,7 @@ report explaining where every value came from. It never uploads anything.
 | --- | --- | --- |
 | F1 2021–2026 | Real rev lights | Reads the game's 15 rev-light bits and learns the RPM each light switches on, per gear, plus where the redline flash starts. |
 | iRacing | Real shift lights | Reads iRacing's first-LED / shift / last-LED / blink RPMs (per gear where the car changes them). LEDs in between are spaced evenly. |
+| Everything else | Lights read off the screen | Watches the car's own rev lights in the picture (see *Reading the lights off the screen*). Offline for now. |
 | Everything else | Manual marks | You press a button as each in-game light comes on (see *Marking lights by hand*). |
 | Everything else, no marks | Estimate only | Uses SimHub's redline; LEDs are spread between two percentages of it. |
 
@@ -72,6 +73,42 @@ instead of the repo's file.
 
 Switching cars during a capture starts a new one and discards the old, so export first.
 
+### Reading the lights off the screen
+
+Most games don't report their rev lights, but they do draw them, so the lights can be read out of the
+picture: bright saturated dots on a dark wheel, which nothing else in a cockpit looks like. Pairing
+what's lit with the RPM at that moment gives the same thresholds the F1 games hand over directly.
+
+What it works out from a few slow sweeps:
+
+- **How many lights there are and where the gaps are**, from the spacing between them. A wider space
+  than the rest is a slot that never lights, and the car file needs those slots too.
+- **The RPM each light switches on at.** Every climb gives a window between the last frame the light
+  was dark and the first it was lit; the value is the middle of that window, and the median across
+  climbs, so one bad frame doesn't move it.
+- **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
+  washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
+- **Where the strip turns to its redline colour**, and whether it blinks there.
+
+Each light's own colour is learned while the strip is only partly lit, because it can't be in its
+redline state then. That's also why sweeps have to start below the first light.
+
+**This runs offline today**, on a recording, not live in SimHub. Record a clip, then:
+
+```bash
+python tools/offline/analyze_recording.py glyphs clip.mkv --rpm-box 1426,620,144,60 --led-box 2320,1100,440,100
+python tools/offline/analyze_recording.py run clip.mkv --rpm-box 1426,620,144,60 --led-box 2320,1100,440,100 --labels <digits from glyphs.png> --out car.csv
+```
+
+The first step writes the digit shapes of the on-screen RPM readout so you can tell it what they are;
+the second writes a CSV of every frame. `tests/data` holds one made this way, from an AMS2 Audi R8
+LMS GT3 evo II, and the tests check the values it produces against that car's file in the repo.
+
+For a recording the detector can work with: borderless windowed, a fixed cockpit camera with head
+movement and motion blur off, an RPM readout visible, and several slow climbs from idle to the
+limiter, holding the limiter a few seconds. The game's own HUD readout beats a SimHub overlay, which
+lags the game by a frame or two and reads roughly 15 rpm low while the revs climb.
+
 ### Marking lights by hand
 
 For games that don't report their LEDs (AMS2, LMU, ACC, AC, PMR, RaceRoom, …):
@@ -125,7 +162,9 @@ Test runner options:
 ## Layout
 
 - `src/Capture` – per-game capture logic (no SimHub types, unit tested)
+- `src/Screen` – reading rev lights out of the picture
 - `src/Profile` – car file model, LED layouts, and merging captures into a file
 - `src/Repo` – read-only GitHub lookup
 - `src/Plugin` – SimHub plugin and raw telemetry readers
-- `tests` – console test runner
+- `tests` – console test runner, with a real recording in `tests/data`
+- `tools/offline` – turns a screen recording into that test data

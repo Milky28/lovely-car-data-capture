@@ -281,7 +281,7 @@ namespace LovelyCarDataCapture
         {
             if (s == null) return "";
             if (s.F1.HasData)
-                return string.Join(" ", s.F1.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.F1.Result(g).CapturedCount + "/" + F1RevLightCapture.LedCount));
+                return string.Join(" ", s.F1.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.F1.Result(g).CapturedCount + "/" + LedWindowCapture.F1LedCount));
             if (s.IRacing.HasData)
                 return (s.IRacing.CarWide != null ? "car-wide ✓ " : "") + string.Join(" ", s.IRacing.Gears.OrderBy(CarProfile.GearRank));
             if (s.Marks.HasData)

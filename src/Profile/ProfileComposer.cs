@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using LovelyCarDataCapture.Capture;
 using LovelyCarDataCapture.Repo;
+using LovelyCarDataCapture.Screen;
 using LovelyCarDataCapture.Util;
 
 namespace LovelyCarDataCapture.Profile
@@ -41,18 +42,32 @@ namespace LovelyCarDataCapture.Profile
                 catch (Exception ex) { notes.Add("The repo file couldn't be read (" + ex.Message + "), so a new file was built instead."); }
             }
 
-            bool f1 = s.F1.HasData, iracing = !f1 && s.IRacing.HasData, manual = !f1 && !iracing && s.Marks.HasData;
+            bool f1 = s.F1.HasData, iracing = !f1 && s.IRacing.HasData;
+            bool screen = !f1 && !iracing && s.Screen.HasData;
+            var screenResult = screen ? s.Screen.Result() : null;
+            if (screen && screenResult.Layout == null)
+            {
+                notes.AddRange(screenResult.Notes);
+                screen = false;
+            }
+            bool manual = !f1 && !iracing && !screen && s.Marks.HasData;
             result.Source = f1 ? "F1 rev lights (game telemetry)"
                 : iracing ? "iRacing shift lights (game telemetry)"
+                : screen ? "the in-game rev lights, read off the screen"
                 : manual ? "manual marks (a button pressed as each in-game light came on)"
                 : "SimHub redline only (this game doesn't report its LEDs)";
             if ((f1 || iracing) && s.Marks.HasData)
                 notes.Add("Manual marks were ignored because this game reports its LEDs directly.");
+            if (screen && s.Marks.HasData)
+                notes.Add("Manual marks were ignored because the lights were read off the screen.");
 
-            int newLeds = f1 ? F1RevLightCapture.LedCount : manual && s.Marks.MostLedMarks > 0 ? s.Marks.MostLedMarks : Math.Max(1, cfg.LedNumber);
+            int newLeds = f1 ? LedWindowCapture.F1LedCount
+                : screen ? screenResult.Layout.LedNumber
+                : manual && s.Marks.MostLedMarks > 0 ? s.Marks.MostLedMarks : Math.Max(1, cfg.LedNumber);
             var p = baseline?.Clone() ?? NewProfile(s, cfg, newLeds, f1, notes);
             p.Normalize();
-            foreach (var gear in s.Redline.Gears.Keys.Concat(s.F1.Gears).Concat(s.IRacing.Gears).Concat(manual ? s.Marks.Gears : new string[0]).Distinct().ToList())
+            var screenGears = screen ? screenResult.Gears.Select(g => g.Gear) : new string[0];
+            foreach (var gear in s.Redline.Gears.Keys.Concat(s.F1.Gears).Concat(s.IRacing.Gears).Concat(screenGears).Concat(manual ? s.Marks.Gears : new string[0]).Distinct().ToList())
             {
                 if (baseline != null && !p.GearOrder.Contains(gear)) notes.Add("Gear " + gear + " isn't in the repo file; it was added.");
                 p.EnsureGear(gear);
@@ -60,6 +75,7 @@ namespace LovelyCarDataCapture.Profile
 
             if (f1) ApplyF1(s, p, baseline, notes, details);
             else if (iracing) ApplyIRacing(s, p, baseline, notes, details);
+            else if (screen) ApplyScreen(screenResult, p, baseline, notes, details);
             else if (manual) ApplyManualMarks(s, p, baseline, notes, details);
             else ApplyRedlineOnly(s, cfg, p, baseline, notes, details);
 
@@ -103,9 +119,9 @@ namespace LovelyCarDataCapture.Profile
         private static void ApplyF1(CaptureSession s, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
         {
             var results = s.F1.Gears.OrderBy(CarProfile.GearRank).Select(s.F1.Result).ToList();
-            bool mappable = p.LedNumber == F1RevLightCapture.LedCount;
+            bool mappable = p.LedNumber == LedWindowCapture.F1LedCount;
             if (!mappable)
-                notes.Add("The repo file has " + p.LedNumber + " LEDs but F1 games report " + F1RevLightCapture.LedCount +
+                notes.Add("The repo file has " + p.LedNumber + " LEDs but F1 games report " + LedWindowCapture.F1LedCount +
                           " rev lights, so its RPMs were left unchanged. The measured thresholds are listed below to map by hand.");
 
             details.Add("Measured rev-light thresholds (rpm). The window is the range the true value lies in: highest RPM seen dark - lowest seen lit.");
@@ -115,13 +131,7 @@ namespace LovelyCarDataCapture.Profile
                 details.Add("Gear " + gr.Gear + ": " + gr.CapturedCount + "/" + gr.Leds.Length + " LEDs lit, " + gr.Samples + " rising samples" +
                             (gr.FlashStart.HasValue ? ", redline flash from " + gr.FlashStart + " rpm" : ", no redline flash seen"));
                 for (int i = 0; i < gr.Leds.Length; i++)
-                {
-                    var led = gr.Leds[i];
-                    string window = led == null ? "never lit" :
-                        led.Inconsistent ? "seen dark at " + led.HighestOff + " after lit at " + led.LowestOn + " (check)" :
-                        led.HighestOff.HasValue ? led.HighestOff + "-" + led.LowestOn : "<= " + led.LowestOn + " (no dark sample below it)";
-                    details.Add(string.Format(CultureInfo.InvariantCulture, "  LED {0,2}  {1,6}  {2}", i + 1, led?.Rpm.ToString(CultureInfo.InvariantCulture) ?? "-", window));
-                }
+                    details.Add(LedLine(i, gr.Leds[i]));
             }
             if (!mappable) return;
 
@@ -153,6 +163,149 @@ namespace LovelyCarDataCapture.Profile
 
             FillUndrivenGears(p, baseline, results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
                 s.F1.Gears.ToList(), notes, "F1 cars normally use the same lights in every gear.");
+        }
+
+        // ---------- rev lights read off the screen ----------
+        private static void ApplyScreen(ScreenLedResult sr, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
+        {
+            var layout = sr.Layout;
+            var results = sr.Gears.OrderBy(g => CarProfile.GearRank(g.Gear)).ToList();
+            bool mappable = p.LedNumber == layout.LedNumber;
+
+            details.Add("Rev lights read from the screen (rpm). Each value is the middle of the range it was seen " +
+                        "switching on in; several climbs that agree closely mean a reliable value. Slots marked \"gap\" " +
+                        "have room on the strip but never light.");
+            details.Add("Strip: " + layout.LedNumber + " slots, " + (layout.LedNumber - layout.GapCount) + " lights, " +
+                        layout.GapCount + " gap(s), spacing " + layout.Pitch.ToString("0.0", CultureInfo.InvariantCulture) + " px.");
+            foreach (var gr in results)
+            {
+                details.Add("");
+                details.Add("Gear " + gr.Gear + ": " + gr.CapturedCount + "/" + (layout.LedNumber - layout.GapCount) +
+                            " lights seen, " + gr.Samples + " rising frames");
+                for (int i = 0; i < gr.Leds.Length; i++)
+                {
+                    if (layout.IsGap[i]) { details.Add(string.Format(CultureInfo.InvariantCulture, "  LED {0,2}  {1,6}  gap", i + 1, "-")); continue; }
+                    details.Add(LedLine(i, gr.Leds[i]));
+                }
+            }
+
+            details.Add("");
+            details.Add("Colors measured on screen (a game washes colors out, so these are matched by their order, not their exact hue):");
+            foreach (var g in sr.ColorGroups)
+                details.Add("  LED " + string.Join(", ", g.Slots.Select(i => (i + 1).ToString(CultureInfo.InvariantCulture))) +
+                            ": " + g.Measured + " -> " + g.Name + " " + g.Hex);
+            if (sr.RedlineRpm.HasValue)
+                details.Add("  Redline color " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
+                            (sr.RedlineHighestBelow.HasValue && sr.RedlineLowestAbove.HasValue
+                                ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
+            notes.AddRange(sr.Notes);
+
+            if (!mappable)
+            {
+                notes.Add("The repo file has " + p.LedNumber + " LEDs but " + layout.LedNumber +
+                          " slots were seen on screen, so its RPMs were left unchanged. The measured values are listed below; " +
+                          "check the capture region covers the whole strip and nothing else.");
+                return;
+            }
+
+            foreach (var gr in results)
+            {
+                var row = p.LedRpm[gr.Gear];
+                for (int i = 0; i < gr.Leds.Length; i++)
+                {
+                    if (layout.IsGap[i]) row[i + 1] = 0;
+                    else if (gr.Leds[i] != null) row[i + 1] = gr.Leds[i].Rpm;
+                }
+                int lastLit = gr.Leds.Where(l => l != null).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
+                if (sr.RedlineRpm.HasValue) row[0] = sr.RedlineRpm.Value;
+                else if (row[0] < lastLit)
+                {
+                    row[0] = lastLit;
+                    notes.Add("Gear " + gr.Gear + ": no redline color change was seen, so the redline was set to the last light's RPM. Hold the limiter briefly to capture it.");
+                }
+
+                if (!gr.Complete)
+                {
+                    var missing = Enumerable.Range(0, gr.Leds.Length).Where(i => !layout.IsGap[i] && gr.Leds[i] == null)
+                                            .Select(i => (i + 1).ToString(CultureInfo.InvariantCulture)).ToList();
+                    if (missing.Count > 0)
+                        notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", missing) + " never lit; " +
+                                  (baseline != null ? "kept the repo values." : "left at 0.") + " Rev higher in this gear to capture them.");
+                }
+            }
+
+            ApplyScreenColors(sr, p, baseline, notes);
+
+            if (sr.BlinkIntervalMs.HasValue)
+            {
+                if (baseline == null || p.RedlineBlinkInterval == 0)
+                {
+                    p.RedlineBlinkInterval = sr.BlinkIntervalMs.Value;
+                    notes.Add("The strip blinked above the redline with a dark phase of about " + sr.BlinkIntervalMs +
+                              " ms, so redlineBlinkInterval was set to that. Check it looks right on the wheel.");
+                }
+                else if (Math.Abs(p.RedlineBlinkInterval - sr.BlinkIntervalMs.Value) > 25)
+                    notes.Add("The blink measured about " + sr.BlinkIntervalMs + " ms but the repo file says " +
+                              p.RedlineBlinkInterval + "; it was left alone.");
+            }
+            else if (sr.RedlineRpm.HasValue && baseline != null && p.RedlineBlinkInterval > 0)
+                notes.Add("The repo file blinks at the redline (redlineBlinkInterval " + p.RedlineBlinkInterval +
+                          ") but the lights stayed on above it in the capture. That may be ATSR's own effect rather than the game's.");
+
+            FillUndrivenGears(p, baseline, results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
+                results.Select(r => r.Gear).ToList(), notes, "Many cars use the same lights in every gear; capture the others if they differ.");
+        }
+
+        private static void ApplyScreenColors(ScreenLedResult sr, CarProfile p, CarProfile baseline, List<string> notes)
+        {
+            var layout = sr.Layout;
+            var suggested = new string[layout.LedNumber + 1];
+            suggested[0] = sr.RedlineColor ?? Red;
+            for (int i = 0; i < layout.LedNumber; i++)
+            {
+                var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
+                suggested[i + 1] = layout.IsGap[i] ? "#00000000" : group?.Hex ?? "#00000000";
+            }
+
+            if (baseline == null)
+            {
+                p.LedColor = suggested.ToList();
+                notes.Add("LED colors come from the screen" + (sr.ColorsDoubtful ? ", and some were hard to tell apart" : "") + "; check them in the RPM LED Builder.");
+                return;
+            }
+
+            // The repo file's colors are left alone: a game's own rendering can't settle a color the
+            // file already states. Only a different grouping is worth reporting.
+            var mismatched = new List<string>();
+            for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
+            {
+                bool fileGap = LedLayout.IsGapColor(p.LedColor[i + 1]);
+                if (fileGap != layout.IsGap[i])
+                    mismatched.Add("LED " + (i + 1) + " is " + (fileGap ? "a gap in the file but lit on screen" : "lit in the file but never lit on screen"));
+            }
+            if (mismatched.Count > 0)
+                notes.Add("Gaps differ from the repo file: " + string.Join("; ", mismatched) + ".");
+
+            var different = new List<string>();
+            for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
+            {
+                if (layout.IsGap[i] || LedLayout.IsGapColor(p.LedColor[i + 1])) continue;
+                if (!SameRgb(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
+            }
+            if (different.Count > 0)
+                notes.Add("Colors on screen suggest " + string.Join(", ", different) + ". The repo file's colors were kept" +
+                          (sr.ColorsDoubtful ? ", and the measured colors were close together anyway." : "; change them by hand if the game disagrees."));
+        }
+
+        /// <summary>Compares two #AARRGGBB or #RRGGBB colors by their RGB part only.</summary>
+        private static bool SameRgb(string a, string b)
+        {
+            string Rgb(string c)
+            {
+                c = (c ?? "").TrimStart('#');
+                return c.Length >= 8 ? c.Substring(2, 6).ToUpperInvariant() : c.ToUpperInvariant();
+            }
+            return Rgb(a) == Rgb(b);
         }
 
         // ---------- manual marks ----------
@@ -302,6 +455,23 @@ namespace LovelyCarDataCapture.Profile
         }
 
         // ---------- shared ----------
+        /// <summary>One line of a measured-thresholds table: the value, and where it came from.</summary>
+        private static string LedLine(int index, LedThreshold led)
+        {
+            string window;
+            if (led == null) window = "never lit";
+            else if (led.Climbs > 1)
+                window = led.Climbs + " climbs, each within " + led.ClimbSpread + " rpm";
+            else if (led.Inconsistent)
+                window = "seen dark at " + led.HighestOff + " after lit at " + led.LowestOn + " (check)";
+            else if (led.HighestOff.HasValue)
+                window = "dark to " + led.HighestOff + ", lit from " + led.LowestOn;
+            else
+                window = "<= " + led.LowestOn + " (no dark sample below it)";
+            return string.Format(CultureInfo.InvariantCulture, "  LED {0,2}  {1,6}  {2}",
+                index + 1, led?.Rpm.ToString(CultureInfo.InvariantCulture) ?? "-", window);
+        }
+
         private static CarProfile NewProfile(CaptureSession s, CaptureSettings cfg, int leds, bool f1, List<string> notes)
         {
             var p = new CarProfile

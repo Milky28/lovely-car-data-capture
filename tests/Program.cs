@@ -10,7 +10,7 @@ using LovelyCarDataCapture.Util;
 
 namespace LovelyCarDataCapture.Tests
 {
-    internal static class Program
+    internal static partial class Program
     {
         private static int _failed, _passed;
         private static bool _showReports;
@@ -45,6 +45,13 @@ namespace LovelyCarDataCapture.Tests
             Run("Manual marks with the wrong count leave the gear alone", ManualMarksWrongCount);
             Run("Manual marks build a new car", ManualMarksNewCar);
             Run("Manual mark undo", ManualMarkUndo);
+            Run("Screen detector finds the lights in real frames", ScreenDetectorOnFrames);
+            Run("Screen calibration finds the strip's gaps", ScreenCalibration);
+            Run("Screen capture matches the AMS2 Audi's repo values", ScreenThresholdsMatchRepoFile);
+            Run("Screen colors are grouped and named", ScreenColorsAreGrouped);
+            Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
+            Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
+            Run("Compose a screen capture for a new car", ComposeScreenNewCar);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
 
@@ -153,7 +160,7 @@ namespace LovelyCarDataCapture.Tests
         // Simulates the F1 game: LED i lights once RPM reaches on[i] and only goes dark again 150 rpm
         // below it (hysteresis); the whole strip flashes above `flash`. Samples are uneven, climbs have
         // small throttle dips, and the car bounces on the limiter.
-        private static void SimulateF1(F1RevLightCapture capture, string gear, int[] on, int flash, int from, int to, int seed)
+        private static void SimulateF1(LedWindowCapture capture, string gear, int[] on, int flash, int from, int to, int seed)
         {
             const int hysteresis = 150;
             var rnd = new Random(seed);
@@ -187,7 +194,7 @@ namespace LovelyCarDataCapture.Tests
 
         private static void F1Thresholds()
         {
-            var cap = new F1RevLightCapture();
+            var cap = new LedWindowCapture(LedWindowCapture.F1LedCount);
             var on = TrueThresholds();
             SimulateF1(cap, "3", on, 11900, 9000, 12100, seed: 1);
             var r = cap.Result("3");
@@ -204,7 +211,7 @@ namespace LovelyCarDataCapture.Tests
 
         private static void F1Partial()
         {
-            var cap = new F1RevLightCapture();
+            var cap = new LedWindowCapture(LedWindowCapture.F1LedCount);
             SimulateF1(cap, "4", TrueThresholds(), 11900, 9000, 11000, seed: 2);
             var r = cap.Result("4");
             Equal(6, r.CapturedCount, "LEDs lit below 11000 rpm (10500..10950)");
