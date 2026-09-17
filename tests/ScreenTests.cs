@@ -223,6 +223,83 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Notes.Any(n => n.Contains("second time")), "the report says the strip changed colour twice");
         }
 
+        /// <summary>
+        /// What a real track gives you: a couple of gears swept cleanly, and higher gears entered
+        /// halfway up the rev range because a corner was coming. The half-caught gears must not be
+        /// written down as if they were measured.
+        /// </summary>
+        private static void ScreenPartialGearsAreNotWrittenDown()
+        {
+            var green = new LedColor(110, 239, 102);
+            var red = new LedColor(247, 52, 41);
+            var cyan = new LedColor(93, 235, 251);
+            var thresholds = new[] { 6000, 6400, 6800, 7200 };
+            const int redline = 7600;
+
+            var session = new CaptureSession("Automobilista2", "Some GT3");
+            long time = 0;
+            void Sweep(string gear, int from, int to, int step)
+            {
+                for (int rpm = from; rpm <= to; rpm += step)
+                {
+                    var blobs = new List<LitBlob>();
+                    for (int led = 0; led < 4; led++)
+                    {
+                        if (rpm <= thresholds[led]) continue;
+                        var color = rpm > redline ? cyan : led < 2 ? green : red;
+                        blobs.Add(new LitBlob { Left = 100 + led * 30 - 9, Right = 100 + led * 30 + 9, Color = color });
+                    }
+                    session.Screen.Record(gear, rpm, time += 16, blobs);
+                }
+                for (int rpm = to; rpm >= from; rpm -= step * 3) session.Screen.Record(gear, rpm, time += 16, new List<LitBlob>());
+            }
+
+            foreach (var gear in new[] { "2", "3" })
+                for (int climb = 0; climb < 2; climb++) Sweep(gear, 5200, 7900, 20);
+            // Gear 5: picked up at 7000 with half the strip already lit, then braked.
+            Sweep("5", 7000, 7300, 20);
+
+            var lookup = new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = "automobilista2/some-gt3.json", Text = FourPairJson() };
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), lookup, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+            var p = result.Profile;
+
+            for (int i = 0; i < 4; i++)
+            {
+                int led = i + 1;
+                Check(Math.Abs(p.LedRpm["2"][led] - thresholds[i]) <= 40,
+                      "gear 2 LED " + led + " measured " + p.LedRpm["2"][led] + ", expected about " + thresholds[i]);
+            }
+            Check(p.LedRpm["5"][1] < 6200, "gear 5's first light is not the 7000 rpm it was first seen lit at, it is " + p.LedRpm["5"][1]);
+            Check(p.LedRpm["5"].SequenceEqual(p.LedRpm["2"]) || p.LedRpm["5"].SequenceEqual(p.LedRpm["3"]),
+                  "gear 5 follows a gear that was measured right through");
+            Check(p.GearOrder.All(g => p.LedRpm[g].SequenceEqual(p.LedRpm["2"])),
+                  "every gear ends up with the same values, as the measured gears agreed");
+            Check(result.Report.Any(l => l.Contains("same lights in every gear")), "the report says why");
+            var row = p.LedRpm["2"];
+            for (int i = 2; i <= 4; i++) Check(row[i] >= row[i - 1], "the lights are in order: " + string.Join(", ", row));
+        }
+
+        private static string FourPairJson() => @"{
+  ""carName"": ""Some GT3"",
+  ""carId"": ""Some GT3"",
+  ""carClass"": ""GT3"",
+  ""ledNumber"": 4,
+  ""redlineBlinkInterval"": 0,
+  ""ledColor"": [""#FF0000FF"",""#FF00FF00"",""#FF00FF00"",""#FFFF0000"",""#FFFF0000""],
+  ""ledRpm"": [
+    {
+      ""R"": [7333,6000,6200,6600,7000],
+      ""N"": [7333,6000,6200,6600,7000],
+      ""1"": [7333,6000,6200,6600,7000],
+      ""2"": [7333,6000,6200,6600,7000],
+      ""3"": [7333,6000,6200,6600,7000],
+      ""4"": [7333,6000,6200,6600,7000],
+      ""5"": [7333,6000,6200,6600,7000]
+    }
+  ]
+}";
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {
@@ -374,6 +451,40 @@ namespace LovelyCarDataCapture.Tests
                 var quit = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
                 quit.Tick += (s, e) => app.Shutdown();
                 quit.Start();
+                app.Run();
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+
+        /// <summary>Shows the SimHub settings page on its own (--settings), to see it outside SimHub.</summary>
+        private static void ShowSettingsPage()
+        {
+            var thread = new System.Threading.Thread(() =>
+            {
+                var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnLastWindowClose };
+                var settings = new CaptureSettings
+                {
+                    ScreenCapture = true,
+                    ScreenBoxX = 2191, ScreenBoxY = 1150, ScreenBoxWidth = 664, ScreenBoxHeight = 100,
+                };
+                var control = new LovelyCarDataCapture.Plugin.ScreenSettingsControl(
+                    settings, () => { }, Describe, (save, test) => { }, Console.WriteLine,
+                    () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"));
+                new System.Windows.Window
+                {
+                    Title = "Settings preview",
+                    Topmost = true,
+                    WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                    Left = 60,
+                    Top = 40,
+                    Width = 880,
+                    Height = 1000,
+                    Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(32, 32, 32)),
+                    Foreground = System.Windows.Media.Brushes.White,
+                    Content = control,
+                }.Show();
                 app.Run();
             });
             thread.SetApartmentState(System.Threading.ApartmentState.STA);

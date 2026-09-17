@@ -213,12 +213,20 @@ namespace LovelyCarDataCapture.Profile
             foreach (var gr in results)
             {
                 var row = p.LedRpm[gr.Gear];
+                var loose = new List<string>();
                 for (int i = 0; i < gr.Leds.Length; i++)
                 {
-                    if (layout.IsGap[i]) row[i + 1] = 0;
-                    else if (gr.Leds[i] != null) row[i + 1] = gr.Leds[i].Rpm;
+                    if (layout.IsGap[i]) { row[i + 1] = 0; continue; }
+                    if (gr.Leds[i] == null) continue;
+                    if (Trusted(gr.Leds[i])) row[i + 1] = gr.Leds[i].Rpm;
+                    else loose.Add((i + 1).ToString(CultureInfo.InvariantCulture));
                 }
-                int lastLit = gr.Leds.Where(l => l != null).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
+                if (loose.Count > 0)
+                    notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", loose) +
+                              " only ever seen already lit, or measured too loosely to use; " +
+                              (baseline != null ? "kept the repo values." : "left at 0.") +
+                              " Rev up from below them in this gear, smoothly.");
+                int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
                 if (sr.RedlineRpm.HasValue) row[0] = sr.RedlineRpm.Value;
                 else if (row[0] < lastLit)
                 {
@@ -226,7 +234,6 @@ namespace LovelyCarDataCapture.Profile
                     notes.Add("Gear " + gr.Gear + ": no redline color change was seen, so the redline was set to the last light's RPM. Hold the limiter briefly to capture it.");
                 }
 
-                if (!gr.Complete)
                 {
                     var missing = Enumerable.Range(0, gr.Leds.Length).Where(i => !layout.IsGap[i] && gr.Leds[i] == null)
                                             .Select(i => (i + 1).ToString(CultureInfo.InvariantCulture)).ToList();
@@ -234,6 +241,24 @@ namespace LovelyCarDataCapture.Profile
                         notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", missing) + " never lit; " +
                                   (baseline != null ? "kept the repo values." : "left at 0.") + " Rev higher in this gear to capture them.");
                 }
+            }
+
+            // The lights come on in a fixed order, so a row that doesn't is wrong however tight its
+            // windows looked: a gear caught mid-shift can produce one.
+            foreach (var gr in results)
+            {
+                var row = p.LedRpm[gr.Gear];
+                var template = TemplateRow(p, baseline, gr.Gear) ?? row;
+                var order = Enumerable.Range(1, p.LedNumber).Where(i => !layout.IsGap[i - 1] && i < template.Length && template[i] > 0)
+                                      .OrderBy(i => template[i]).ToList();
+                bool ordered = true;
+                for (int k = 1; k < order.Count; k++)
+                    if (row[order[k]] > 0 && row[order[k - 1]] > 0 && row[order[k]] < row[order[k - 1]]) ordered = false;
+                if (ordered || baseline == null) continue;
+
+                p.LedRpm[gr.Gear] = (int[])baseline.LedRpm[gr.Gear].Clone();
+                notes.Add("Gear " + gr.Gear + ": the lights came out in the wrong order, so this gear was left as the repo had it. " +
+                          "That usually means the gear was only held briefly, or was caught mid-shift.");
             }
 
             ApplyScreenColors(sr, p, baseline, notes);
@@ -258,11 +283,34 @@ namespace LovelyCarDataCapture.Profile
             var capturedGears = results.Select(r => r.Gear).ToList();
             var kept = p.GearOrder.Where(g => !capturedGears.Contains(g)).ToList();
 
-            if (baseline != null && bestGear != null && kept.Count > 0 && cfg.CopyMeasuredToOtherGears)
+            // Two gears measured right through that agree are evidence the car uses one set of lights
+            // for every gear, which nearly all do. That beats keeping repo values in the gears a real
+            // track gives no room to sweep, and it's said plainly in the report either way.
+            var complete = results.Where(r => Enumerable.Range(0, r.Leds.Length).All(i => layout.IsGap[i] || Trusted(r.Leds[i])))
+                                  .Select(r => r.Gear).ToList();
+            bool uniform = complete.Count >= 2 && complete.Skip(1).All(g =>
+                Enumerable.Range(1, p.LedNumber).All(i => Math.Abs(p.LedRpm[g][i] - p.LedRpm[complete[0]][i]) <= 60));
+            if (bestGear != null && uniform)
             {
-                foreach (var gear in kept) p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
-                notes.Add("Gear " + string.Join(", ", kept) + " not captured; gear " + bestGear +
-                          "'s measured values were copied over the repo's, because CopyMeasuredToOtherGears is on.");
+                var others = p.GearOrder.Where(g => !complete.Contains(g)).ToList();
+                foreach (var gear in others) p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
+                if (others.Count > 0)
+                    notes.Add("Gear " + string.Join(", ", complete) + " were measured right through and agree, so this car uses the " +
+                              "same lights in every gear; gear " + bestGear + "'s values were used for gear " + string.Join(", ", others) +
+                              ". If this car really does differ per gear, capture those gears and export again.");
+            }
+            else if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
+            {
+                // Also over gears that were driven but not fully measured: a row half from the repo and
+                // half from the screen describes no car at all.
+                var incomplete = results.Where(r => r.Gear != bestGear && r.Leds.Where((l, i) => !layout.IsGap[i]).Any(l => !Trusted(l)))
+                                        .Select(r => r.Gear).ToList();
+                var filled = kept.Concat(incomplete).Distinct().ToList();
+                foreach (var gear in filled) p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
+                if (filled.Count > 0)
+                    notes.Add("Gear " + string.Join(", ", filled) + ": gear " + bestGear +
+                              "'s measured values were used, because CopyMeasuredToOtherGears is on and these gears weren't " +
+                              "measured right through.");
             }
             else
             {
@@ -485,6 +533,26 @@ namespace LovelyCarDataCapture.Profile
             }
         }
 
+        /// <summary>
+        /// How far apart a value's own evidence may be before it's treated as not measured. A light
+        /// seen going on somewhere within 150 rpm is worth writing down; one pinned down no better
+        /// than "somewhere in the last 600 rpm" is a guess wearing a number.
+        /// </summary>
+        private const int MaxWindowRpm = 150;
+
+        /// <summary>
+        /// Whether a measurement is tight enough to write into the file. A light that was never seen
+        /// dark below its value has only an upper bound: the sweep started with it already lit, which
+        /// is what a gear selected halfway up the rev range gives you.
+        /// </summary>
+        private static bool Trusted(LedThreshold led)
+        {
+            if (led == null || led.Inconsistent) return false;
+            if (led.Climbs > 1) return led.ClimbSpread <= MaxWindowRpm;
+            if (!led.HighestOff.HasValue) return false;
+            return led.LowestOn - led.HighestOff.Value <= MaxWindowRpm;
+        }
+
         // ---------- shared ----------
         /// <summary>One line of a measured-thresholds table: the value, and where it came from.</summary>
         private static string LedLine(int index, LedThreshold led)
@@ -492,7 +560,9 @@ namespace LovelyCarDataCapture.Profile
             string window;
             if (led == null) window = "never lit";
             else if (led.Climbs > 1)
-                window = led.Climbs + " climbs, each within " + led.ClimbSpread + " rpm";
+                window = led.Climbs + " climbs, agreeing within " + led.ClimbSpread + " rpm" + (Trusted(led) ? "" : " - too loose, not used");
+            else if (!Trusted(led) && led.HighestOff.HasValue)
+                window = "dark to " + led.HighestOff + ", lit from " + led.LowestOn + " - too wide to use";
             else if (led.Inconsistent)
                 window = "seen dark at " + led.HighestOff + " after lit at " + led.LowestOn + " (check)";
             else if (led.HighestOff.HasValue)

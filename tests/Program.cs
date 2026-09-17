@@ -21,6 +21,7 @@ namespace LovelyCarDataCapture.Tests
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--repo-data") repoData = args[i + 1];
             _showReports = args.Contains("--show-reports");
             if (args.Contains("--overlay")) { ShowOverlay(); return 0; }
+            if (args.Contains("--settings")) { ShowSettingsPage(); return 0; }
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--box") { ShowCaptureBox(args[i + 1]); return 0; }
@@ -59,6 +60,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen capture matches the AMS2 Audi's repo values", ScreenThresholdsMatchRepoFile);
             Run("Screen colors are grouped and named", ScreenColorsAreGrouped);
             Run("Screen capture reports a two-stage redline", ScreenTwoStageRedline);
+            Run("Screen capture drops half-caught gears", ScreenPartialGearsAreNotWrittenDown);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);
