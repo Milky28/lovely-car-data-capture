@@ -39,6 +39,12 @@ namespace LovelyCarDataCapture.Tests
             Run("ATSR layout rule", AtsrLayoutRule);
             Run("ATSR compatibility checks", AtsrChecks);
             Run("ATSR Developer Mode path", AtsrDevelopmentPath);
+            Run("ATSR built-in car behaviour is reported", AtsrSpecialCarNotes);
+            Run("Manual marks follow the repo file's gaps", ManualMarksWithGaps);
+            Run("Manual marks follow mirrored and grouped LEDs", ManualMarksMirrored);
+            Run("Manual marks with the wrong count leave the gear alone", ManualMarksWrongCount);
+            Run("Manual marks build a new car", ManualMarksNewCar);
+            Run("Manual mark undo", ManualMarkUndo);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
 
@@ -371,6 +377,85 @@ namespace LovelyCarDataCapture.Tests
                 AtsrCompatibility.DevelopmentFilePath(@"C:\SimHub", "Ferrari 296 GT3"), "path");
         }
 
+        private static void AtsrSpecialCarNotes()
+        {
+            var bmw = AtsrSpecialCars.Describe("BMW M Hybrid V8");
+            Check(bmw.Count == 1 && bmw[0].Contains("BMW LMDh light pattern"), "AMS2 BMW M Hybrid V8:\n" + string.Join("\n", bmw));
+            var both = AtsrSpecialCars.Describe("bmwlmdh");
+            Equal(2, both.Count, "iRacing bmwlmdh has the pattern and a second stage");
+            var lmu = AtsrSpecialCars.Describe("GT3_Racing Spirit of Léman 2025");
+            Check(lmu.Count == 1 && lmu[0].Contains("LMU Aston Martin GT3"), "LMU group with an accent:\n" + string.Join("\n", lmu));
+            Equal(0, AtsrSpecialCars.Describe("acuransxevo22gt3").Count, "ordinary car");
+
+            var p = CarProfile.Parse(F1File(15, "BMW M Hybrid V8"));
+            Check(AtsrCompatibility.Check(p, "Automobilista2", null).Any(n => n.Contains("BMW LMDh")), "included in the compatibility check");
+        }
+
+        private static CaptureSession MarkSession(string carId, params (string gear, int[] leds, int? redline)[] gears)
+        {
+            var s = new CaptureSession("Automobilista2", carId);
+            foreach (var (gear, leds, redline) in gears)
+            {
+                foreach (var rpm in leds) s.Marks.MarkLed(gear, rpm);
+                if (redline.HasValue) s.Marks.MarkRedline(gear, redline.Value);
+                s.Redline.Record(gear, 7000, 0, 0, 7500, 6);
+            }
+            return s;
+        }
+
+        private static void ManualMarksWithGaps()
+        {
+            // Acura GT3: 12 LEDs, gaps at 3 and 10, so 10 steps left to right.
+            var marks = new[] { 6400, 6500, 6600, 6700, 6800, 6900, 7000, 7100, 7200, 7300 };
+            var s = MarkSession("acuransxevo22gt3", ("3", marks, 7400));
+            var result = Compose(s, Found(AcuraGt3, "automobilista2/acuransxevo22gt3.json"));
+            SeqEqual(new[] { 7400, 6400, 6500, 0, 6600, 6700, 6800, 6900, 7000, 7100, 0, 7200, 7300 }, result.Profile.LedRpm["3"], "gear 3");
+            SeqEqual(CarProfile.Parse(AcuraGt3).LedRpm["4"], result.Profile.LedRpm["4"], "unmarked gear 4 kept");
+            Check(result.Source.StartsWith("manual marks"), "source: " + result.Source);
+        }
+
+        private static void ManualMarksMirrored()
+        {
+            // Mirrored strip, 7 LEDs with a centre gap: 3 steps.
+            var mirrored = "{\n  \"carName\": \"Car\",\n  \"carId\": \"car\",\n  \"carClass\": \"GT3\",\n  \"ledNumber\": 7,\n  \"redlineBlinkInterval\": 250,\n  \"ledColor\": [\"#FFFF0000\",\"#FF00FF00\",\"#FF00FF00\",\"#FFFFFF00\",\"#00000000\",\"#FFFFFF00\",\"#FF00FF00\",\"#FF00FF00\"],\n  \"ledRpm\": [\n    {\n      \"1\": [7000,5000,5500,6000,0,6000,5500,5000],\n      \"2\": [7000,5000,5500,6000,0,6000,5500,5000]\n    }\n  ]\n}\n";
+            var s = MarkSession("car", ("2", new[] { 6100, 6400, 6800 }, null));
+            var p = Compose(s, Found(mirrored, "automobilista2/car.json")).Profile;
+            SeqEqual(new[] { 7000, 6100, 6400, 6800, 0, 6800, 6400, 6100 }, p.LedRpm["2"], "gear 2 mirrored, redline kept");
+            Equal(LedLayout.AtsrLayout.SideToCenter, LedLayout.AtsrLayoutOf(p.LedRpm["2"].Skip(1).ToList()), "still mirrored for ATSR");
+        }
+
+        private static void ManualMarksWrongCount()
+        {
+            var s = MarkSession("acuransxevo22gt3", ("3", new[] { 6400, 6500, 6600 }, null));
+            var result = Compose(s, Found(AcuraGt3, "automobilista2/acuransxevo22gt3.json"));
+            SeqEqual(CarProfile.Parse(AcuraGt3).LedRpm["3"], result.Profile.LedRpm["3"], "gear 3 unchanged");
+            Check(string.Join("\n", result.Report).Contains("3 LED marks, but the repo file lights up in 10 steps"), "explained:\n" + string.Join("\n", result.Report));
+        }
+
+        private static void ManualMarksNewCar()
+        {
+            var s = MarkSession("newcar", ("2", new[] { 6000, 6200, 6400, 6600, 6800 }, 7000), ("3", new[] { 6100, 6300, 6500, 6700, 6900 }, null));
+            var result = Compose(s, new RepoLookup { Status = RepoLookupStatus.NotInRepo, RelativePath = "automobilista2/newcar.json" });
+            var p = result.Profile;
+            Equal(5, p.LedNumber, "LED count from the marks");
+            SeqEqual(new[] { 7000, 6000, 6200, 6400, 6600, 6800 }, p.LedRpm["2"], "gear 2");
+            SeqEqual(new[] { 6900, 6100, 6300, 6500, 6700, 6900 }, p.LedRpm["3"], "gear 3, redline from last LED");
+            SeqEqual(p.LedRpm["2"], p.LedRpm["5"], "unmarked gear copies the best marked gear");
+            Check(result.AtsrProblems.Count == 0, "no ATSR problems:\n" + string.Join("\n", result.AtsrProblems));
+        }
+
+        private static void ManualMarkUndo()
+        {
+            var m = new ManualMarkCapture();
+            m.MarkLed("3", 6000);
+            m.MarkLed("3", 6200);
+            m.MarkRedline("3", 7000);
+            Equal("gear 3 redline mark", m.Undo(), "undo redline");
+            Check(m.Redline("3") == null, "redline removed");
+            Equal("gear 3 LED 2 mark", m.Undo(), "undo LED");
+            SeqEqual(new[] { 6000 }, m.LedMarks("3"), "one mark left");
+        }
+
         // Reads the public repo on GitHub; opt-in because it needs the network.
         private static void LiveRepo()
         {
@@ -411,7 +496,7 @@ namespace LovelyCarDataCapture.Tests
                 foreach (var problem in AtsrCompatibility.Check(parsed, Path.GetFileName(Path.GetDirectoryName(f)), Found(text, rel)))
                 {
                     var kind = problem.Contains("looks for") ? "file name" : problem.Contains("all the time") ? "always lit" :
-                        problem.Contains("can't use") ? "rejected" : problem.Contains("left to right") ? "shown left to right" : "other";
+                        problem.Contains("can't use") ? "rejected" : problem.Contains("left to right") ? "shown left to right" : problem.Contains("built-in") ? "built-in ATSR behaviour" : "other";
                     atsr[kind] = atsr.TryGetValue(kind, out var n) ? n + 1 : 1;
                 }
                 // Files whose lists don't match ledNumber can't round-trip unchanged; the builder reports those separately.

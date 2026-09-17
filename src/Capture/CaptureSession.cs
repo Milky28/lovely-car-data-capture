@@ -17,6 +17,7 @@ namespace LovelyCarDataCapture.Capture
         public RedlineCapture Redline { get; } = new RedlineCapture();
         public F1RevLightCapture F1 { get; } = new F1RevLightCapture();
         public IRacingShiftLightCapture IRacing { get; } = new IRacingShiftLightCapture();
+        public ManualMarkCapture Marks { get; } = new ManualMarkCapture();
 
         /// <summary>Samples skipped because the pit limiter was on (it drives its own LED patterns).</summary>
         public int PitLimiterSamples { get; set; }

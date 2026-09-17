@@ -26,7 +26,7 @@ namespace LovelyCarDataCapture.Profile
 
         public static List<string> Check(CarProfile p, string gameName, RepoLookup lookup)
         {
-            var notes = new List<string>();
+            var notes = AtsrSpecialCars.Describe(p.CarId);
             var sim = Slug.Make(gameName);
             var expectedPath = sim + "/" + Slug.Make(p.CarId) + ".json";
 

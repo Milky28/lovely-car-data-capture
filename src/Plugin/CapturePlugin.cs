@@ -32,7 +32,11 @@ namespace LovelyCarDataCapture
         private volatile string _lastReportPath = "";
         private volatile string _lastAtsrDevPath = "";
         private volatile string _repoStatus = "";
+        private volatile string _lastMark = "";
         private string _loggedRawType;
+        // Latest gear and RPM seen by DataUpdate, for the mark actions (guarded by _lock).
+        private string _currentGear;
+        private int _currentRpm;
 
         public CaptureSettings Settings;
         public PluginManager PluginManager { get; set; }
@@ -50,10 +54,47 @@ namespace LovelyCarDataCapture
             this.AttachDelegate("LastExportPath", () => _lastExportPath);
             this.AttachDelegate("LastReportPath", () => _lastReportPath);
             this.AttachDelegate("LastAtsrDeveloperPath", () => _lastAtsrDevPath);
+            this.AttachDelegate("LastMark", () => _lastMark);
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
             this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => StopAndExport());
-            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => { lock (_lock) { _session = null; _lookup = null; } _repoStatus = ""; });
+            this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => { lock (_lock) { _session = null; _lookup = null; } _repoStatus = ""; _lastMark = ""; });
+            // For games that don't report their LEDs: press as each in-game light comes on while revving slowly.
+            this.AddAction(actionName: "MarkLed", actionStart: (pm, _) => Mark(redline: false));
+            this.AddAction(actionName: "MarkRedline", actionStart: (pm, _) => Mark(redline: true));
+            this.AddAction(actionName: "UndoMark", actionStart: (pm, _) => UndoMark());
+        }
+
+        private void Mark(bool redline)
+        {
+            string message;
+            lock (_lock)
+            {
+                if (!_capturing || _session == null || string.IsNullOrEmpty(_currentGear) || _currentRpm <= 0)
+                {
+                    message = "Start a capture and get in the car before marking.";
+                }
+                else if (redline)
+                {
+                    _session.Marks.MarkRedline(_currentGear, _currentRpm);
+                    message = "Gear " + _currentGear + ": redline at " + _currentRpm + " rpm";
+                }
+                else
+                {
+                    int n = _session.Marks.MarkLed(_currentGear, _currentRpm);
+                    message = "Gear " + _currentGear + ": LED step " + n + " at " + _currentRpm + " rpm";
+                }
+            }
+            _lastMark = message;
+            SimHub.Logging.Current.Info(LogPrefix + "Mark: " + message);
+        }
+
+        private void UndoMark()
+        {
+            string removed;
+            lock (_lock) removed = _session?.Marks.Undo();
+            _lastMark = removed == null ? "Nothing to undo" : "Removed " + removed;
+            SimHub.Logging.Current.Info(LogPrefix + _lastMark);
         }
 
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -73,6 +114,8 @@ namespace LovelyCarDataCapture
                 }
 
                 var s = _session;
+                _currentGear = d.Gear;
+                _currentRpm = (int)Math.Round(d.Rpms);
                 s.RecordCar(d.CarModel, d.CarClass);
                 // CarSettings_CurrentGearRedLineRPM resolves to SimHub's per-gear redline when enabled for this car, otherwise the car-wide redline.
                 s.Redline.Record(d.Gear, d.Rpms, d.CarSettings_CurrentGearRedLineRPM, d.CarSettings_RedLineRPM,
@@ -205,6 +248,7 @@ namespace LovelyCarDataCapture
                 _lastAtsrDevPath = devPath;
                 report.Add("Copied to ATSR's Developer Mode folder: " + devPath);
                 report.Add("  To use it: in ATSR's RPM settings, turn Developer Mode on (or off and on again) to reload the file.");
+                report.Add("  If the lights don't change, restart SimHub.");
                 report.Add("  Remove the copy when you're done, or ATSR keeps using it instead of the repo's file.");
                 SimHub.Logging.Current.Info(LogPrefix + "Copied to ATSR Developer Mode folder: " + devPath);
             }
@@ -228,6 +272,7 @@ namespace LovelyCarDataCapture
             if (s == null) return "";
             if (s.F1.HasData) return "F1 rev lights";
             if (s.IRacing.HasData) return "iRacing shift lights";
+            if (s.Marks.HasData) return "Manual marks";
             return "SimHub redline only";
         }
 
@@ -239,6 +284,8 @@ namespace LovelyCarDataCapture
                 return string.Join(" ", s.F1.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.F1.Result(g).CapturedCount + "/" + F1RevLightCapture.LedCount));
             if (s.IRacing.HasData)
                 return (s.IRacing.CarWide != null ? "car-wide ✓ " : "") + string.Join(" ", s.IRacing.Gears.OrderBy(CarProfile.GearRank));
+            if (s.Marks.HasData)
+                return string.Join(" ", s.Marks.Gears.OrderBy(CarProfile.GearRank).Select(g => g + ":" + s.Marks.LedMarks(g).Count + (s.Marks.Redline(g).HasValue ? "+RL" : "")));
             return "";
         }
     }

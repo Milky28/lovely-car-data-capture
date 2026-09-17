@@ -10,7 +10,8 @@ report explaining where every value came from. It never uploads anything.
 | --- | --- | --- |
 | F1 2021–2026 | Real rev lights | Reads the game's 15 rev-light bits and learns the RPM each light switches on, per gear, plus where the redline flash starts. |
 | iRacing | Real shift lights | Reads iRacing's first-LED / shift / last-LED / blink RPMs (per gear where the car changes them). LEDs in between are spaced evenly. |
-| Everything else | Estimate only | Uses SimHub's redline; LEDs are spread between two percentages of it. |
+| Everything else | Manual marks | You press a button as each in-game light comes on (see *Marking lights by hand*). |
+| Everything else, no marks | Estimate only | Uses SimHub's redline; LEDs are spread between two percentages of it. |
 
 **Starting from the repo file:** when the car already exists in Lovely Car Data (looked up by carId
 on GitHub, read-only), that file is the starting point. Only values the game actually reported are
@@ -37,20 +38,26 @@ The ATSR SimHub plugin is the main consumer of these files, so every report ends
 - It reads the layout from the last gear: an exact mirror is "sides to centre", anything else "left
   to right", and a row that is both in increasing order and a mirror (one LED, or all equal) makes
   ATSR ignore the file.
+- Some cars have built-in behaviour in ATSR, matched by carId in any game: its own BMW LMDh light
+  pattern (only the file's RPM values are used) or an extra redline stage (several iRacing GT cars and
+  LMU Aston Martin, McLaren, Cadillac and Ford liveries). The report names them. This is why editing
+  AMS2's "BMW M Hybrid V8" file changes nothing on the wheel.
 
 ### Trying a file in ATSR before submitting
 
 Set `CopyToAtsrDeveloperFolder` to `true`. Each export is then also written to
 `<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`, which ATSR reads when **Developer
-Mode** is on in its RPM settings. Toggle Developer Mode (or re-enter the car) to make ATSR reload it,
-and delete the copy afterwards or ATSR keeps using it instead of the repo's file.
+Mode** is on in its RPM settings. Toggle Developer Mode (or re-enter the car) to make ATSR reload it;
+if the lights still don't change, restart SimHub. Delete the copy afterwards or ATSR keeps using it
+instead of the repo's file.
 
 ## Install
 
 1. Build (below) or take `LovelyCarDataCapture.dll` from `bin/Release/net48/`.
 2. Copy the DLL into the SimHub folder (default `C:\Program Files (x86)\SimHub`) and restart SimHub.
 3. Enable **Lovely Car Data Capture** when SimHub asks.
-4. Map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`, `StopAndExport`, `ResetCapture`.
+4. Map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`, `StopAndExport`, `ResetCapture`,
+   and for games without LED data `MarkLed`, `MarkRedline`, `UndoMark`.
 
 ## Use
 
@@ -65,14 +72,28 @@ and delete the copy afterwards or ATSR keeps using it instead of the repo's file
 
 Switching cars during a capture starts a new one and discards the old, so export first.
 
+### Marking lights by hand
+
+For games that don't report their LEDs (AMS2, LMU, ACC, AC, PMR, RaceRoom, …):
+
+1. Start a capture and select a gear.
+2. Rev very slowly (a throttle axis you can set precisely helps). Each time the next in-game light, or
+   pair/group of lights, comes on, press **MarkLed**. When the redline flash starts, press **MarkRedline**.
+3. `UndoMark` removes the last press. Repeat for other gears if their lights differ.
+4. Stop and export.
+
+With a repo file, marks fill its LED layout step by step (gaps, mirrored pairs and grouped LEDs are
+kept); a gear whose number of marks doesn't match the file's steps is left unchanged. For a new car the
+LEDs are laid out left to right, one per mark. Marks include your reaction time, so rev slowly.
+
 ### SimHub properties
 
-`LovelyCarDataCapture.Capturing`, `CarId`, `GearsSeen`, `LedSource`, `LedProgress` (e.g. `3:15/15 4:9/15`),
-`RepoStatus`, `LastExportPath`, `LastReportPath`, `LastAtsrDeveloperPath`.
+`LovelyCarDataCapture.Capturing`, `CarId`, `GearsSeen`, `LedSource`, `LedProgress` (e.g. `3:15/15 4:9/15`,
+or `3:10+RL` for marks), `LastMark`, `RepoStatus`, `LastExportPath`, `LastReportPath`, `LastAtsrDeveloperPath`.
 
 ### Settings
 
-Stored in SimHub's `PluginsData\Common\CaptureSettings.json`:
+Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit it with SimHub closed):
 
 | Setting | Default | |
 | --- | --- | --- |

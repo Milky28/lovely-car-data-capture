@@ -41,12 +41,18 @@ namespace LovelyCarDataCapture.Profile
                 catch (Exception ex) { notes.Add("The repo file couldn't be read (" + ex.Message + "), so a new file was built instead."); }
             }
 
-            bool f1 = s.F1.HasData, iracing = !f1 && s.IRacing.HasData;
-            result.Source = f1 ? "F1 rev lights (game telemetry)" : iracing ? "iRacing shift lights (game telemetry)" : "SimHub redline only (this game doesn't report its LEDs)";
+            bool f1 = s.F1.HasData, iracing = !f1 && s.IRacing.HasData, manual = !f1 && !iracing && s.Marks.HasData;
+            result.Source = f1 ? "F1 rev lights (game telemetry)"
+                : iracing ? "iRacing shift lights (game telemetry)"
+                : manual ? "manual marks (a button pressed as each in-game light came on)"
+                : "SimHub redline only (this game doesn't report its LEDs)";
+            if ((f1 || iracing) && s.Marks.HasData)
+                notes.Add("Manual marks were ignored because this game reports its LEDs directly.");
 
-            var p = baseline?.Clone() ?? NewProfile(s, cfg, f1 ? F1RevLightCapture.LedCount : Math.Max(1, cfg.LedNumber), f1, notes);
+            int newLeds = f1 ? F1RevLightCapture.LedCount : manual && s.Marks.MostLedMarks > 0 ? s.Marks.MostLedMarks : Math.Max(1, cfg.LedNumber);
+            var p = baseline?.Clone() ?? NewProfile(s, cfg, newLeds, f1, notes);
             p.Normalize();
-            foreach (var gear in s.Redline.Gears.Keys.Concat(s.F1.Gears).Concat(s.IRacing.Gears).Distinct().ToList())
+            foreach (var gear in s.Redline.Gears.Keys.Concat(s.F1.Gears).Concat(s.IRacing.Gears).Concat(manual ? s.Marks.Gears : new string[0]).Distinct().ToList())
             {
                 if (baseline != null && !p.GearOrder.Contains(gear)) notes.Add("Gear " + gear + " isn't in the repo file; it was added.");
                 p.EnsureGear(gear);
@@ -54,6 +60,7 @@ namespace LovelyCarDataCapture.Profile
 
             if (f1) ApplyF1(s, p, baseline, notes, details);
             else if (iracing) ApplyIRacing(s, p, baseline, notes, details);
+            else if (manual) ApplyManualMarks(s, p, baseline, notes, details);
             else ApplyRedlineOnly(s, cfg, p, baseline, notes, details);
 
             if (sim == "lmu")
@@ -145,7 +152,82 @@ namespace LovelyCarDataCapture.Profile
             }
 
             FillUndrivenGears(p, baseline, results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
-                s.F1.Gears.ToList(), notes);
+                s.F1.Gears.ToList(), notes, "F1 cars normally use the same lights in every gear.");
+        }
+
+        // ---------- manual marks ----------
+        private static void ApplyManualMarks(CaptureSession s, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
+        {
+            var marks = s.Marks;
+            var gaps = LedLayout.Gaps(p);
+            var marked = marks.Gears.OrderBy(CarProfile.GearRank).ToList();
+
+            details.Add("Manual marks (rpm, in the order the lights came on):");
+            foreach (var gear in marked)
+            {
+                var leds = marks.LedMarks(gear).ToList();
+                var redline = marks.Redline(gear);
+                details.Add("  Gear " + gear + ": " + (leds.Count > 0 ? string.Join(", ", leds) : "no LED marks") + (redline.HasValue ? "; redline " + redline : ""));
+
+                var sorted = leds.OrderBy(v => v).ToList();
+                if (!sorted.SequenceEqual(leds))
+                    notes.Add("Gear " + gear + ": the LED marks weren't in increasing order, so they were sorted. Check for a double press.");
+
+                var row = p.LedRpm[gear];
+                if (sorted.Count > 0)
+                {
+                    // Which LEDs light together, lowest RPM first, taken from the repo file so its layout,
+                    // gaps and mirroring are kept. A new file is simply left to right.
+                    var stages = Stages(TemplateRow(p, baseline, gear), gaps, p.LedNumber);
+                    if (stages.Count == sorted.Count)
+                    {
+                        for (int k = 0; k < stages.Count; k++)
+                            foreach (var led in stages[k]) row[led] = sorted[k];
+                    }
+                    else if (baseline != null)
+                    {
+                        notes.Add("Gear " + gear + ": " + sorted.Count + " LED marks, but the repo file lights up in " + stages.Count +
+                                  " steps, so this gear was left unchanged. Mark every step, lowest RPM first.");
+                    }
+                    else
+                    {
+                        for (int k = 0; k < Math.Min(stages.Count, sorted.Count); k++)
+                            foreach (var led in stages[k]) row[led] = sorted[k];
+                        notes.Add("Gear " + gear + ": " + sorted.Count + " LED marks for " + stages.Count + " LEDs. Check the values in the RPM LED Builder.");
+                    }
+                }
+
+                if (redline.HasValue) row[0] = redline.Value;
+                else if (baseline == null && sorted.Count > 0)
+                {
+                    row[0] = sorted[sorted.Count - 1];
+                    notes.Add("Gear " + gear + ": no redline mark, so the redline was set to the last LED's RPM.");
+                }
+            }
+
+            notes.Add("Manual marks include your reaction time, so values can be slightly high. Revving very slowly keeps that small.");
+            if (baseline == null)
+                notes.Add("New car: the LEDs were laid out left to right. If the real strip is mirrored or has gaps, fix the layout in the RPM LED Builder.");
+
+            var best = marked.Where(g => marks.LedMarks(g).Count > 0).OrderByDescending(g => marks.LedMarks(g).Count).FirstOrDefault();
+            FillUndrivenGears(p, baseline, best, marked, notes, "Many cars use the same lights in every gear; mark the others if they differ.");
+        }
+
+        private static int[] TemplateRow(CarProfile p, CarProfile baseline, string gear)
+        {
+            if (baseline == null) return null;
+            if (baseline.LedRpm.TryGetValue(gear, out var own) && own.Skip(1).Any(v => v > 0)) return own;
+            return baseline.GearOrder.Select(g => baseline.LedRpm[g]).FirstOrDefault(r => r.Skip(1).Any(v => v > 0));
+        }
+
+        /// <summary>Groups of LED indexes that light at the same RPM, lowest first. Without a template, one LED per step.</summary>
+        private static List<List<int>> Stages(int[] template, bool[] gaps, int ledNumber)
+        {
+            var active = Enumerable.Range(1, ledNumber).Where(i => !(i < gaps.Length && gaps[i])).ToList();
+            if (template == null) return active.Select(i => new List<int> { i }).ToList();
+            return active.Where(i => i < template.Length && template[i] > 0)
+                .GroupBy(i => template[i]).OrderBy(g => g.Key)
+                .Select(g => g.ToList()).ToList();
         }
 
         // ---------- iRacing ----------
@@ -231,7 +313,7 @@ namespace LovelyCarDataCapture.Profile
                 RedlineBlinkInterval = f1 ? 50 : 0,
                 LedColor = DefaultColors(leds).ToList(),
             };
-            int top = Math.Max(s.Redline.TopGear, s.F1.Gears.Concat(s.IRacing.Gears).Select(CarProfile.GearRank).Where(r => r < 1000).DefaultIfEmpty(0).Max());
+            int top = Math.Max(s.Redline.TopGear, s.F1.Gears.Concat(s.IRacing.Gears).Concat(s.Marks.Gears).Select(CarProfile.GearRank).Where(r => r < 1000).DefaultIfEmpty(0).Max());
             p.GearOrder.Add("R");
             p.GearOrder.Add("N");
             for (int i = 1; i <= top; i++) p.GearOrder.Add(i.ToString(CultureInfo.InvariantCulture));
@@ -242,17 +324,17 @@ namespace LovelyCarDataCapture.Profile
             return p;
         }
 
-        private static void FillUndrivenGears(CarProfile p, CarProfile baseline, string bestGear, List<string> driven, List<string> notes)
+        private static void FillUndrivenGears(CarProfile p, CarProfile baseline, string bestGear, List<string> driven, List<string> notes, string why)
         {
             var undriven = p.GearOrder.Where(g => !driven.Contains(g)).ToList();
             if (undriven.Count == 0 || bestGear == null) return;
             if (baseline != null)
             {
-                notes.Add("Gear " + string.Join(", ", undriven) + " not driven; kept the repo values.");
+                notes.Add("Gear " + string.Join(", ", undriven) + " not captured; kept the repo values.");
                 return;
             }
             foreach (var g in undriven) p.LedRpm[g] = (int[])p.LedRpm[bestGear].Clone();
-            notes.Add("Gear " + string.Join(", ", undriven) + " not driven; copied gear " + bestGear + "'s values. F1 cars normally use the same lights in every gear.");
+            notes.Add("Gear " + string.Join(", ", undriven) + " not captured; copied gear " + bestGear + "'s values. " + why);
         }
 
         private static IEnumerable<string> DescribeChanges(CarProfile before, CarProfile after)
