@@ -13,6 +13,7 @@ namespace LovelyCarDataCapture.Profile
         public CarProfile Profile;
         public string Source;
         public List<string> Report = new List<string>();
+        public List<string> AtsrProblems = new List<string>();
     }
 
     /// <summary>
@@ -79,6 +80,10 @@ namespace LovelyCarDataCapture.Profile
                 r.Add("Notes:");
                 r.AddRange(notes.Select(n => "  - " + n));
             }
+            result.AtsrProblems = AtsrCompatibility.Check(p, s.GameName, lookup);
+            r.Add("");
+            r.Add("ATSR compatibility:");
+            r.AddRange(result.AtsrProblems.Count > 0 ? result.AtsrProblems.Select(n => "  - " + n) : new[] { "  - no problems found" });
             if (details.Count > 0)
             {
                 r.Add("");
@@ -147,7 +152,7 @@ namespace LovelyCarDataCapture.Profile
         private static void ApplyIRacing(CaptureSession s, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
         {
             var ir = s.IRacing;
-            var gaps = baseline != null ? LedLayout.Gaps(p) : null;
+            var gaps = LedLayout.Gaps(p);
             var layouts = p.GearOrder.Select(g => LedLayout.Classify(p.LedRpm[g])).Where(l => l != LayoutKind.Irregular && l != LayoutKind.Trivial).ToList();
             var commonLayout = layouts.Count > 0 ? layouts.GroupBy(l => l).OrderByDescending(g => g.Count()).First().Key : LayoutKind.Rising;
 

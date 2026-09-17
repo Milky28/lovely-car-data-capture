@@ -23,6 +23,28 @@ Special cases the report calls out:
 - **LMU:** repo files are generated from templates, so the values belong in `src_data/lmu`.
 - LEDs never lit in a gear, gears not driven, and a redline flash that was never reached.
 
+## ATSR compatibility
+
+The ATSR SimHub plugin is the main consumer of these files, so every report ends with an
+**ATSR compatibility** section based on how ATSR reads them:
+
+- It looks files up as `data/<game>/<carId cleaned up like the README's rule>.json`, not through the
+  manifest, so exports are always named that way. The report says when the repo's file is named
+  differently (ATSR never finds those).
+- It takes each gear's values by position: R, N, 1, 2, …
+- An LED lights when RPM is above its value; a colored LED with value 0 is always lit.
+- Any black LED color (RGB `000000`, any alpha) is a gap that never lights.
+- It reads the layout from the last gear: an exact mirror is "sides to centre", anything else "left
+  to right", and a row that is both in increasing order and a mirror (one LED, or all equal) makes
+  ATSR ignore the file.
+
+### Trying a file in ATSR before submitting
+
+Set `CopyToAtsrDeveloperFolder` to `true`. Each export is then also written to
+`<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`, which ATSR reads when **Developer
+Mode** is on in its RPM settings. Toggle Developer Mode (or re-enter the car) to make ATSR reload it,
+and delete the copy afterwards or ATSR keeps using it instead of the repo's file.
+
 ## Install
 
 1. Build (below) or take `LovelyCarDataCapture.dll` from `bin/Release/net48/`.
@@ -46,7 +68,7 @@ Switching cars during a capture starts a new one and discards the old, so export
 ### SimHub properties
 
 `LovelyCarDataCapture.Capturing`, `CarId`, `GearsSeen`, `LedSource`, `LedProgress` (e.g. `3:15/15 4:9/15`),
-`RepoStatus`, `LastExportPath`, `LastReportPath`.
+`RepoStatus`, `LastExportPath`, `LastReportPath`, `LastAtsrDeveloperPath`.
 
 ### Settings
 
@@ -56,6 +78,7 @@ Stored in SimHub's `PluginsData\Common\CaptureSettings.json`:
 | --- | --- | --- |
 | `UseRepoFile` | `true` | Look the car up on GitHub and build on its file. |
 | `RepoBranch` | `main` | |
+| `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's Developer Mode folder. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |
 | `LedNumber` | `12` | LED count for new cars in games without LED data. |
 | `FirstLedPercent` / `LastLedPercent` | `72` / `97.5` | Estimate spread for games without LED data. |

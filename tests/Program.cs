@@ -34,6 +34,11 @@ namespace LovelyCarDataCapture.Tests
             Run("Compose iRacing follows the repo file's gaps and mirroring", ComposeIRacingMirrored);
             Run("Compose iRacing per-gear lights keep undriven gears", ComposeIRacingPerGear);
             Run("Compose without LED data keeps the repo file", ComposeRedlineOnlyExisting);
+            Run("Gaps are black LED colors, as in ATSR", GapColors);
+            Run("Mirrored rows are symmetric by position, so ATSR sees them as mirrored", MirroredMatchesAtsr);
+            Run("ATSR layout rule", AtsrLayoutRule);
+            Run("ATSR compatibility checks", AtsrChecks);
+            Run("ATSR Developer Mode path", AtsrDevelopmentPath);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
 
@@ -304,6 +309,68 @@ namespace LovelyCarDataCapture.Tests
             Check(string.Join("\n", result.Report).Contains("Gear 3: SimHub 7400"), "comparison listed");
         }
 
+        private static void GapColors()
+        {
+            Check(LedLayout.IsGapColor("#00000000"), "transparent black is a gap");
+            Check(LedLayout.IsGapColor("#FF000000"), "opaque black is a gap");
+            Check(LedLayout.IsGapColor("#000000"), "6-digit black is a gap");
+            Check(!LedLayout.IsGapColor("#FF00FF00"), "green isn't");
+            Check(!LedLayout.IsGapColor("#00FF0000"), "transparent red isn't");
+            var p = CarProfile.Parse(AcuraGt3);
+            var gaps = LedLayout.Gaps(p);
+            SeqEqual(new[] { 3, 10 }, Enumerable.Range(1, p.LedNumber).Where(i => gaps[i]), "Acura GT3 gaps");
+        }
+
+        private static void MirroredMatchesAtsr()
+        {
+            // The builder's example strip: 12 LEDs with gaps at 3 and 10.
+            var gaps = new bool[13];
+            gaps[3] = gaps[10] = true;
+            var row = LedLayout.Generate(12, gaps, LayoutKind.OutsideIn, 7200, 5300, 7100);
+            SeqEqual(new[] { 7200, 5300, 5750, 0, 6200, 6650, 7100, 7100, 6650, 6200, 0, 5750, 5300 }, row, "mirrored row");
+            Equal(LedLayout.AtsrLayout.SideToCenter, LedLayout.AtsrLayoutOf(row.Skip(1).ToList()), "ATSR layout");
+        }
+
+        private static void AtsrLayoutRule()
+        {
+            Equal(LedLayout.AtsrLayout.Rejected, LedLayout.AtsrLayoutOf(new[] { 7700 }), "1 LED (iRacing stock cars)");
+            Equal(LedLayout.AtsrLayout.Rejected, LedLayout.AtsrLayoutOf(new[] { 6000, 6000, 6000, 6000 }), "all equal");
+            Equal(LedLayout.AtsrLayout.SideToCenter, LedLayout.AtsrLayoutOf(new[] { 5500, 5700, 5900, 6100, 6300, 6300, 6100, 5900, 5700, 5500 }), "ACC mirrored");
+            Equal(LedLayout.AtsrLayout.LeftToRight, LedLayout.AtsrLayoutOf(new[] { 5300, 5500, 0, 5700, 5900 }), "rising with gap");
+            Equal(LedLayout.AtsrLayout.LeftToRight, LedLayout.AtsrLayoutOf(new[] { 5500, 5700, 5900, 5910, 5700, 5500 }), "nearly mirrored");
+        }
+
+        private static void AtsrChecks()
+        {
+            var misnamed = CarProfile.Parse(F1File(15, "201"));
+            var notes = AtsrCompatibility.Check(misnamed, "F12025", Found("", "f12025/221.json"));
+            Check(notes.Any(n => n.Contains("looks for data/f12025/201.json") && n.Contains("data/f12025/221.json")), "file name mismatch:\n" + string.Join("\n", notes));
+
+            var alwaysLit = CarProfile.Parse(AcuraGt3);
+            alwaysLit.LedRpm["R"][1] = 0;
+            notes = AtsrCompatibility.Check(alwaysLit, "IRacing", null);
+            Check(notes.Any(n => n.Contains("lights them all the time: gear R (LED 1)")), "always lit:\n" + string.Join("\n", notes));
+            Check(!notes.Any(n => n.Contains("LED 3") || n.Contains("LED 10")), "gaps at 3 and 10 aren't reported as always lit");
+
+            var order = CarProfile.Parse(AcuraGt3);
+            order.GearOrder.Remove("R");
+            order.GearOrder.Add("R");
+            notes = AtsrCompatibility.Check(order, "IRacing", null);
+            Check(notes.Any(n => n.Contains("by position")), "gear order:\n" + string.Join("\n", notes));
+
+            var stockCar = CarProfile.Parse("{\"carName\":\"Monte Carlo\",\"carId\":\"stockcars-chevymontecarlo03\",\"carClass\":\"NXT\",\"ledNumber\":1,\"redlineBlinkInterval\":0,\"ledColor\":[\"#00000000\",\"#FFFFFF00\"],\"ledRpm\":[{\"R\":[9800,7700],\"N\":[9800,7700],\"1\":[9800,7700]}]}");
+            notes = AtsrCompatibility.Check(stockCar, "IRacing", null);
+            Check(notes.Any(n => n.Contains("ATSR can't use this file")), "rejected layout:\n" + string.Join("\n", notes));
+
+            Equal(0, AtsrCompatibility.Check(CarProfile.Parse(AcuraGt3), "IRacing", Found(AcuraGt3, "iracing/acuransxevo22gt3.json")).Count, "clean file has no problems");
+        }
+
+        private static void AtsrDevelopmentPath()
+        {
+            Equal(@"C:\SimHub\_ATSR_DevelopmentData\rpm_data\ferrari-296-gt3.json",
+                AtsrCompatibility.DevelopmentFilePath(@"C:\SimHub", "Ferrari 296 GT3"), "path");
+        }
+
         // Reads the public repo on GitHub; opt-in because it needs the network.
         private static void LiveRepo()
         {
@@ -334,17 +401,26 @@ namespace LovelyCarDataCapture.Tests
                 .ToList();
             Check(files.Count > 0, "no car files found under " + dataDir);
             var mismatched = new List<string>();
+            var atsr = new Dictionary<string, int>();
             foreach (var f in files)
             {
                 var text = File.ReadAllText(f).Replace("\r\n", "\n");
                 if (!text.EndsWith("\n")) text += "\n";
                 var parsed = CarProfile.Parse(text);
+                var rel = f.Substring(dataDir.Length).TrimStart('\\', '/').Replace('\\', '/');
+                foreach (var problem in AtsrCompatibility.Check(parsed, Path.GetFileName(Path.GetDirectoryName(f)), Found(text, rel)))
+                {
+                    var kind = problem.Contains("looks for") ? "file name" : problem.Contains("all the time") ? "always lit" :
+                        problem.Contains("can't use") ? "rejected" : problem.Contains("left to right") ? "shown left to right" : "other";
+                    atsr[kind] = atsr.TryGetValue(kind, out var n) ? n + 1 : 1;
+                }
                 // Files whose lists don't match ledNumber can't round-trip unchanged; the builder reports those separately.
                 if (parsed.LedColor.Count != parsed.LedNumber + 1 || parsed.LedRpm.Values.Any(r => r.Length != parsed.LedNumber + 1)) continue;
                 if (parsed.ToJson() != text) mismatched.Add(f.Substring(dataDir.Length).TrimStart('\\', '/'));
             }
             Check(mismatched.Count <= files.Count / 20, $"{mismatched.Count} of {files.Count} files differ, e.g. {string.Join(", ", mismatched.Take(5))}");
             Console.WriteLine($"      {files.Count} files; {mismatched.Count} differ only in formatting (e.g. {string.Join(", ", mismatched.Take(3))})");
+            Console.WriteLine("      ATSR problems: " + string.Join(", ", atsr.OrderBy(k => k.Key).Select(k => k.Key + " " + k.Value)));
         }
     }
 }

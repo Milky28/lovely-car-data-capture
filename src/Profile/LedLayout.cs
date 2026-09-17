@@ -30,7 +30,9 @@ namespace LovelyCarDataCapture.Profile
         /// <summary>
         /// Builds [redline, LED1..N] with thresholds spread evenly from <paramref name="first"/> to
         /// <paramref name="last"/> across the active LEDs, following <paramref name="layout"/>.
-        /// Irregular/Trivial layouts are treated as Rising.
+        /// Irregular/Trivial layouts are treated as Rising. Mirrored layouts pair LEDs by physical
+        /// position (1 with N, 2 with N-1, …) so the row reads the same from both ends, which is what
+        /// ATSR checks for.
         /// </summary>
         public static int[] Generate(int ledNumber, bool[] isGap, LayoutKind layout, int redline, double first, double last)
         {
@@ -41,15 +43,17 @@ namespace LovelyCarDataCapture.Profile
             if (n == 0) return row;
 
             bool mirrored = layout == LayoutKind.OutsideIn || layout == LayoutKind.InsideOut;
-            int stages = mirrored ? (n + 1) / 2 : n;
+            int PairOf(int led) => Math.Min(led - 1, ledNumber - led);
+            var pairs = mirrored ? active.Select(PairOf).Distinct().OrderBy(x => x).ToList() : null;
+            int stages = mirrored ? pairs.Count : n;
             for (int p = 0; p < n; p++)
             {
                 int s;
                 switch (layout)
                 {
                     case LayoutKind.Falling: s = n - 1 - p; break;
-                    case LayoutKind.OutsideIn: s = Math.Min(p, n - 1 - p); break;
-                    case LayoutKind.InsideOut: s = stages - 1 - Math.Min(p, n - 1 - p); break;
+                    case LayoutKind.OutsideIn: s = pairs.IndexOf(PairOf(active[p])); break;
+                    case LayoutKind.InsideOut: s = stages - 1 - pairs.IndexOf(PairOf(active[p])); break;
                     default: s = p; break;
                 }
                 double t = stages > 1 ? s / (double)(stages - 1) : 1.0;
@@ -58,16 +62,47 @@ namespace LovelyCarDataCapture.Profile
             return row;
         }
 
-        /// <summary>LEDs that are 0 in every gear are gaps in the physical strip.</summary>
+        /// <summary>
+        /// Gaps in the physical strip: LEDs whose color is black (RGB 000000) at any alpha. ATSR never
+        /// lights those, whatever their RPM values.
+        /// </summary>
         public static bool[] Gaps(CarProfile profile)
         {
             var gaps = new bool[profile.LedNumber + 1];
-            for (int i = 1; i <= profile.LedNumber; i++)
-            {
-                gaps[i] = profile.GearOrder.Count > 0 && profile.GearOrder.All(g =>
-                    !profile.LedRpm.TryGetValue(g, out var row) || i >= row.Length || row[i] <= 0);
-            }
+            for (int i = 1; i <= profile.LedNumber && i < profile.LedColor.Count; i++) gaps[i] = IsGapColor(profile.LedColor[i]);
             return gaps;
+        }
+
+        public static bool IsGapColor(string color)
+        {
+            if (string.IsNullOrEmpty(color) || color[0] != '#') return false;
+            var hex = color.Substring(1);
+            if (hex.Length == 8) hex = hex.Substring(2);
+            return hex.Length == 6 && hex == "000000";
+        }
+
+        public enum AtsrLayout { LeftToRight, SideToCenter, Rejected }
+
+        /// <summary>
+        /// ATSR's rule, applied to the last gear's LED values (gaps included): an exact mirror is side-to-centre,
+        /// anything else left-to-right, and a row that is both non-decreasing (ignoring 0s) and an exact mirror
+        /// makes ATSR drop the file and use its generic presets.
+        /// </summary>
+        public static AtsrLayout AtsrLayoutOf(IReadOnlyList<int> ledValues)
+        {
+            bool ascending = true;
+            for (int i = 1; i < ledValues.Count; i++)
+            {
+                if (ledValues[i] != 0 && ledValues[i] < ledValues[i - 1]) ascending = false;
+            }
+            int half = ledValues.Count / 2;
+            bool symmetric = true;
+            for (int j = 0; j < half; j++)
+            {
+                if (ledValues[j] != ledValues[ledValues.Count - 1 - j]) symmetric = false;
+            }
+            if (ascending && symmetric) return AtsrLayout.Rejected;
+            return symmetric ? AtsrLayout.SideToCenter : AtsrLayout.LeftToRight;
         }
     }
 }

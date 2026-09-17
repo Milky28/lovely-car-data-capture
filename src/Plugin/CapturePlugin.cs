@@ -30,6 +30,7 @@ namespace LovelyCarDataCapture
         private volatile bool _capturing;
         private volatile string _lastExportPath = "";
         private volatile string _lastReportPath = "";
+        private volatile string _lastAtsrDevPath = "";
         private volatile string _repoStatus = "";
         private string _loggedRawType;
 
@@ -48,6 +49,7 @@ namespace LovelyCarDataCapture
             this.AttachDelegate("RepoStatus", () => _repoStatus);
             this.AttachDelegate("LastExportPath", () => _lastExportPath);
             this.AttachDelegate("LastReportPath", () => _lastReportPath);
+            this.AttachDelegate("LastAtsrDeveloperPath", () => _lastAtsrDevPath);
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
             this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => StopAndExport());
@@ -164,26 +166,52 @@ namespace LovelyCarDataCapture
                 var root = string.IsNullOrWhiteSpace(Settings.OutputFolder)
                     ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SimHub", "LovelyCarDataCapture")
                     : Settings.OutputFolder;
-                var fileName = lookup?.Status == RepoLookupStatus.Found
-                    ? Path.GetFileNameWithoutExtension(lookup.RelativePath)
-                    : Slug.Make(session.CarId);
+                // Always named after the carId: that's the file name ATSR looks for, even when the repo's file is named differently.
+                var fileName = Slug.Make(session.CarId);
                 path = Path.Combine(root, Slug.Make(session.GameName), fileName + ".json");
                 reportPath = Path.Combine(root, Slug.Make(session.GameName), fileName + ".report.txt");
             }
 
+            var utf8 = new UTF8Encoding(false);
+            if (Settings.CopyToAtsrDeveloperFolder) CopyToAtsrDeveloperFolder(session.CarId, json, result.Report, utf8);
+
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                var utf8 = new UTF8Encoding(false);
                 File.WriteAllText(path, json, utf8);
                 File.WriteAllText(reportPath, string.Join(Environment.NewLine, result.Report) + Environment.NewLine, utf8);
                 _lastExportPath = path;
                 _lastReportPath = reportPath;
                 SimHub.Logging.Current.Info(LogPrefix + "Exported " + path + " (" + result.Source + "). Report: " + reportPath);
+                foreach (var problem in result.AtsrProblems) SimHub.Logging.Current.Warn(LogPrefix + "ATSR: " + problem);
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Error(LogPrefix + "Export failed for " + path, ex);
+            }
+        }
+
+        // Lets the file be tried on real hardware straight away: ATSR's Developer Mode reads this folder
+        // before its own copy of the repo. Adds the outcome to the report.
+        private void CopyToAtsrDeveloperFolder(string carId, string json, List<string> report, Encoding encoding)
+        {
+            var simHubFolder = Path.GetDirectoryName(typeof(CapturePlugin).Assembly.Location);
+            var devPath = AtsrCompatibility.DevelopmentFilePath(simHubFolder, carId);
+            report.Add("");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(devPath));
+                File.WriteAllText(devPath, json, encoding);
+                _lastAtsrDevPath = devPath;
+                report.Add("Copied to ATSR's Developer Mode folder: " + devPath);
+                report.Add("  To use it: in ATSR's RPM settings, turn Developer Mode on (or off and on again) to reload the file.");
+                report.Add("  Remove the copy when you're done, or ATSR keeps using it instead of the repo's file.");
+                SimHub.Logging.Current.Info(LogPrefix + "Copied to ATSR Developer Mode folder: " + devPath);
+            }
+            catch (Exception ex)
+            {
+                report.Add("Couldn't copy to ATSR's Developer Mode folder (" + devPath + "): " + ex.Message);
+                SimHub.Logging.Current.Error(LogPrefix + "Copy to ATSR Developer Mode folder failed: " + devPath, ex);
             }
         }
 
