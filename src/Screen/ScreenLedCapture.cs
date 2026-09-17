@@ -13,6 +13,11 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Colour measured for each slot below the redline; a black colour for gaps and unseen slots.</summary>
         public LedColor[] MeasuredColors;
         public List<LedPalette.ColorGroup> ColorGroups = new List<LedPalette.ColorGroup>();
+        /// <summary>
+        /// Slots never seen lit below the redline, so their own colour was never on screen: the last
+        /// pair on a strip often lights exactly as the whole strip changes colour. Not the same as a gap.
+        /// </summary>
+        public bool[] ColorUnknown;
         public bool ColorsDoubtful;
         /// <summary>RPM where the strip switches to its redline colour, if it does.</summary>
         public int? RedlineRpm;
@@ -293,12 +298,19 @@ namespace LovelyCarDataCapture.Screen
             }
 
             result.MeasuredColors = new LedColor[layout.LedNumber];
+            result.ColorUnknown = new bool[layout.LedNumber];
             for (int s = 0; s < layout.LedNumber; s++)
             {
                 result.MeasuredColors[s] = counts[s] == 0
                     ? new LedColor(0, 0, 0)
                     : new LedColor((int)(sums[s, 0] / counts[s]), (int)(sums[s, 1] / counts[s]), (int)(sums[s, 2] / counts[s]));
+                result.ColorUnknown[s] = counts[s] == 0 && !layout.IsGap[s] && lit.Any(f => f[s]);
             }
+            var unknown = Enumerable.Range(0, layout.LedNumber).Where(s => result.ColorUnknown[s]).ToList();
+            if (unknown.Count > 0)
+                result.Notes.Add("LED " + string.Join(", ", unknown.Select(s => s + 1)) +
+                                 " only ever lit at or above the redline, where the whole strip has already changed colour, " +
+                                 "so their own colour couldn't be seen.");
 
             result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap);
             result.ColorsDoubtful = LedPalette.Doubtful(result.ColorGroups);

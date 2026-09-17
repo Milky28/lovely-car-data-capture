@@ -227,7 +227,16 @@ namespace LovelyCarDataCapture.Profile
                               (baseline != null ? "kept the repo values." : "left at 0.") +
                               " Rev up from below them in this gear, smoothly.");
                 int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
-                if (sr.RedlineRpm.HasValue) row[0] = sr.RedlineRpm.Value;
+                if (sr.RedlineRpm.HasValue && sr.RedlineRpm.Value >= lastLit) row[0] = sr.RedlineRpm.Value;
+                else if (sr.RedlineRpm.HasValue)
+                {
+                    // Above the redline ATSR shows every light in the redline colour, so a redline below
+                    // the last light would leave that light's own colour unreachable.
+                    row[0] = lastLit;
+                    notes.Add("Gear " + gr.Gear + ": the colour change measured at " + sr.RedlineRpm +
+                              " rpm, below the last light at " + lastLit + " rpm, so the redline was set to the light. " +
+                              "The two happen within a few rpm of each other on this car.");
+                }
                 else if (row[0] < lastLit)
                 {
                     row[0] = lastLit;
@@ -289,15 +298,16 @@ namespace LovelyCarDataCapture.Profile
             var complete = results.Where(r => Enumerable.Range(0, r.Leds.Length).All(i => layout.IsGap[i] || Trusted(r.Leds[i])))
                                   .Select(r => r.Gear).ToList();
             bool uniform = complete.Count >= 2 && complete.Skip(1).All(g =>
-                Enumerable.Range(1, p.LedNumber).All(i => Math.Abs(p.LedRpm[g][i] - p.LedRpm[complete[0]][i]) <= 60));
+                Enumerable.Range(1, p.LedNumber).All(i => Math.Abs(p.LedRpm[g][i] - p.LedRpm[complete[0]][i]) <= UniformRpm));
             if (bestGear != null && uniform)
             {
-                var others = p.GearOrder.Where(g => !complete.Contains(g)).ToList();
-                foreach (var gear in others) p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
-                if (others.Count > 0)
-                    notes.Add("Gear " + string.Join(", ", complete) + " were measured right through and agree, so this car uses the " +
-                              "same lights in every gear; gear " + bestGear + "'s values were used for gear " + string.Join(", ", others) +
-                              ". If this car really does differ per gear, capture those gears and export again.");
+                // Every gear, not just the ones that weren't swept: the few rpm between two measurements
+                // of the same thing are noise, and a file that repeats them pretends they mean something.
+                foreach (var gear in p.GearOrder.Where(g => g != bestGear).ToList())
+                    p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
+                notes.Add("Gear " + string.Join(", ", complete) + " were measured right through and agree within " +
+                          UniformRpm + " rpm, so this car uses the same lights in every gear; gear " + bestGear +
+                          "'s values were used for all of them. If this car really does differ per gear, capture those gears and export again.");
             }
             else if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
             {
@@ -343,8 +353,13 @@ namespace LovelyCarDataCapture.Profile
             for (int i = 0; i < layout.LedNumber; i++)
             {
                 var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
-                suggested[i + 1] = layout.IsGap[i] ? "#00000000" : group?.Hex ?? "#00000000";
+                bool unknown = sr.ColorUnknown != null && sr.ColorUnknown[i];
+                suggested[i + 1] = layout.IsGap[i] ? "#00000000"
+                    : group?.Hex ?? (unknown ? suggested[0] : "#00000000");
             }
+            if (baseline == null && sr.ColorUnknown != null && sr.ColorUnknown.Any(u => u))
+                notes.Add("LED " + string.Join(", ", Enumerable.Range(0, layout.LedNumber).Where(i => sr.ColorUnknown[i]).Select(i => i + 1)) +
+                          " were given the redline colour, being the only colour they were ever seen in. Check them in the game.");
 
             if (baseline == null)
             {
@@ -358,6 +373,7 @@ namespace LovelyCarDataCapture.Profile
             var mismatched = new List<string>();
             for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
             {
+                if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
                 bool fileGap = LedLayout.IsGapColor(p.LedColor[i + 1]);
                 if (fileGap != layout.IsGap[i])
                     mismatched.Add("LED " + (i + 1) + " is " + (fileGap ? "a gap in the file but lit on screen" : "lit in the file but never lit on screen"));
@@ -369,6 +385,7 @@ namespace LovelyCarDataCapture.Profile
             for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
             {
                 if (layout.IsGap[i] || LedLayout.IsGapColor(p.LedColor[i + 1])) continue;
+                if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
                 if (!SameRgb(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
             }
             if (different.Count > 0)
@@ -539,6 +556,9 @@ namespace LovelyCarDataCapture.Profile
         /// than "somewhere in the last 600 rpm" is a guess wearing a number.
         /// </summary>
         private const int MaxWindowRpm = 150;
+
+        /// <summary>How far two gears may disagree and still count as the same set of lights, measured twice.</summary>
+        private const int UniformRpm = 60;
 
         /// <summary>
         /// Whether a measurement is tight enough to write into the file. A light that was never seen

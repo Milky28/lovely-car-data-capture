@@ -300,6 +300,53 @@ namespace LovelyCarDataCapture.Tests
   ]
 }";
 
+        /// <summary>
+        /// The McLaren 720S GT3 Evo case: the last pair of lights comes on at the same RPM as the whole
+        /// strip changes colour. Their own colour is therefore never on screen, which is not the same as
+        /// them being gaps, and the redline must not end up below a light that comes on beneath it.
+        /// </summary>
+        private static void ScreenLastPairLightsAtTheRedline()
+        {
+            var green = new LedColor(110, 239, 102);
+            var red = new LedColor(247, 52, 41);
+            var cyan = new LedColor(93, 235, 251);
+            var thresholds = new[] { 6000, 6400, 6800, 7200, 7600 };
+            const int redline = 7600;
+
+            var session = new CaptureSession("Automobilista2", "Late Pair GT3");
+            long time = 0;
+            foreach (var gear in new[] { "2", "3" })
+            {
+                for (int climb = 0; climb < 2; climb++)
+                {
+                    for (int rpm = 5400; rpm <= 8000; rpm += 20)
+                    {
+                        var blobs = new List<LitBlob>();
+                        for (int led = 0; led < thresholds.Length; led++)
+                        {
+                            if (rpm <= thresholds[led]) continue;
+                            var color = rpm > redline ? cyan : led < 2 ? green : red;
+                            blobs.Add(new LitBlob { Left = 100 + led * 30 - 9, Right = 100 + led * 30 + 9, Color = color });
+                        }
+                        session.Screen.Record(gear, rpm, time += 16, blobs);
+                    }
+                    for (int rpm = 8000; rpm >= 5400; rpm -= 60) session.Screen.Record(gear, rpm, time += 16, new List<LitBlob>());
+                }
+            }
+
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+            var p = result.Profile;
+            var row = p.LedRpm["2"];
+
+            Equal(5, p.LedNumber, "five lights, none of them gaps");
+            Check(row[0] >= row[5], "the redline " + row[0] + " is not below the last light at " + row[5]);
+            Check(Math.Abs(row[5] - redline) <= 40, "the last light is about " + redline + ", got " + row[5]);
+            Check(!LedLayout.IsGapColor(p.LedColor[5]), "the last light is not written as a gap, it is " + p.LedColor[5]);
+            Equal(p.LedColor[0], p.LedColor[5], "a light only ever seen in the redline colour takes that colour");
+            Check(result.Report.Any(l => l.Contains("couldn't be seen")), "the report says their colour was never visible");
+        }
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {
