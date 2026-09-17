@@ -20,6 +20,10 @@ namespace LovelyCarDataCapture.Screen
         public string RedlineColor;
         /// <summary>What the strip actually measured above the redline, before it was matched to a colour.</summary>
         public LedColor RedlineMeasured;
+        /// <summary>RPM where the strip changes colour a second time, for cars with a two-stage redline.</summary>
+        public int? SecondStageRpm;
+        public string SecondStageColor;
+        public LedColor SecondStageMeasured;
         /// <summary>Length of one dark phase above the redline, in milliseconds; null when the lights don't blink.</summary>
         public int? BlinkIntervalMs;
         public bool BlinkSeen;
@@ -204,7 +208,12 @@ namespace LovelyCarDataCapture.Screen
             result.RedlineHighestBelow = (int)Math.Round(Math.Min(up ?? estimate, down ?? estimate));
             result.RedlineLowestAbove = (int)Math.Round(Math.Max(up ?? estimate, down ?? estimate));
 
-            var above = _samples.Where((s, i) => redline[i] == true && s.Rpm > estimate)
+            FindSecondStage(redline, estimate, result);
+
+            // Only the first stage's own frames: averaging in a second stage would give a colour the
+            // strip never shows, halfway between the two.
+            double ceiling = result.SecondStageRpm ?? double.MaxValue;
+            var above = _samples.Where((s, i) => redline[i] == true && s.Rpm > estimate && s.Rpm < ceiling)
                                 .SelectMany(s => s.Colors).Where(c => c.Hue >= 0).ToList();
             if (above.Count > 0)
             {
@@ -212,6 +221,53 @@ namespace LovelyCarDataCapture.Screen
                 result.RedlineColor = LedPalette.Classify(mean, out _);
                 result.RedlineMeasured = mean;
             }
+        }
+
+        /// <summary>
+        /// Some cars change colour twice: once at the redline and again close to the limiter. The file
+        /// format keeps one redline, so this is only reported, but it explains a strip that doesn't
+        /// look like the file on the wheel.
+        /// </summary>
+        private void FindSecondStage(bool?[] redline, double redlineRpm, ScreenLedResult result)
+        {
+            var aboveRedline = new List<int>();
+            for (int i = 0; i < _samples.Count; i++)
+                if (redline[i] == true && _samples[i].Rpm > redlineRpm) aboveRedline.Add(i);
+            if (aboveRedline.Count < 30) return;
+
+            // The first stage's colour, taken from the frames just above the redline.
+            var lowest = aboveRedline.OrderBy(i => _samples[i].Rpm).Take(Math.Max(10, aboveRedline.Count / 5)).ToList();
+            var firstHues = lowest.SelectMany(i => _samples[i].Colors).Select(c => c.Hue).Where(h => h >= 0).ToList();
+            if (firstHues.Count == 0) return;
+            double firstStage = Median(firstHues);
+
+            var changedAt = new List<double>();
+            var changedColors = new List<LedColor>();
+            int previous = -1;
+            foreach (int i in aboveRedline)
+            {
+                var hues = _samples[i].Colors.Select(c => c.Hue).Where(h => h >= 0).ToList();
+                if (hues.Count < 3) { previous = i; continue; }
+                bool changed = Math.Abs(Median(hues) - firstStage) > RedlineHueShift;
+                if (changed)
+                {
+                    changedColors.AddRange(_samples[i].Colors.Where(c => c.Hue >= 0));
+                    if (previous >= 0 && _samples[previous].Rpm < _samples[i].Rpm &&
+                        Math.Abs(Median(_samples[previous].Colors.Select(c => c.Hue).Where(h => h >= 0).DefaultIfEmpty(firstStage).ToList()) - firstStage) <= RedlineHueShift)
+                        changedAt.Add((_samples[i].Rpm + _samples[previous].Rpm) / 2.0);
+                }
+                previous = i;
+            }
+            if (changedAt.Count == 0 || changedColors.Count == 0) return;
+
+            result.SecondStageRpm = RoundTo(Median(changedAt), 5);
+            result.SecondStageMeasured = new LedColor((int)changedColors.Average(c => c.R),
+                                                      (int)changedColors.Average(c => c.G),
+                                                      (int)changedColors.Average(c => c.B));
+            result.SecondStageColor = LedPalette.Classify(result.SecondStageMeasured, out _);
+            result.Notes.Add("The strip changed colour a second time at about " + result.SecondStageRpm +
+                             " rpm (" + result.SecondStageMeasured + "). A car file holds one redline, so only the first is in it; " +
+                             "ATSR adds a second stage itself for some cars.");
         }
 
         /// <summary>Colour of each slot while the strip is showing its own colours, below the redline.</summary>

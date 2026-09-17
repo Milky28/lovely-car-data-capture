@@ -181,6 +181,48 @@ namespace LovelyCarDataCapture.Tests
             Check(groups.All(g => g.Slots.All(s => s != 2 && s != 9)), "gaps have no colour");
         }
 
+        /// <summary>
+        /// A strip like the AMS2 McLaren 720S GT3 Evo: green to red over eight lights, then the whole
+        /// strip turns cyan at the redline and changes again close to the limiter. The file keeps the
+        /// first change; the second is reported so it isn't mistaken for the file being wrong.
+        /// </summary>
+        private static void ScreenTwoStageRedline()
+        {
+            var green = new LedColor(110, 239, 102);
+            var red = new LedColor(247, 52, 41);
+            var cyan = new LedColor(93, 235, 251);
+            var flash = new LedColor(250, 240, 90);      // second stage: the strip goes yellow-white
+            var thresholds = new[] { 6000, 6400, 6800, 7200 };
+            const int redline = 7600, secondStage = 8100;
+
+            var capture = new ScreenLedCapture();
+            long time = 0;
+            for (int climb = 0; climb < 3; climb++)
+            {
+                for (int rpm = 5000; rpm <= 8600; rpm += 20)
+                {
+                    var blobs = new List<LitBlob>();
+                    for (int led = 0; led < 4; led++)
+                    {
+                        if (rpm <= thresholds[led]) continue;
+                        var color = rpm > secondStage ? flash : rpm > redline ? cyan : led < 2 ? green : red;
+                        blobs.Add(new LitBlob { Left = 100 + led * 30 - 9, Right = 100 + led * 30 + 9, Color = color });
+                    }
+                    capture.Record("3", rpm, time += 16, blobs);
+                }
+                for (int rpm = 8600; rpm >= 5000; rpm -= 40) capture.Record("3", rpm, time += 16, new List<LitBlob>());
+            }
+
+            var result = capture.Result();
+            Check(result.RedlineRpm.HasValue, "the first colour change was found");
+            Check(Math.Abs(result.RedlineRpm.Value - redline) <= 40, "the redline is about " + redline + ", got " + result.RedlineRpm);
+            Equal("#FF00FFFF", result.RedlineColor, "the redline colour is the cyan the strip turns");
+            Check(result.SecondStageRpm.HasValue, "the second stage was found");
+            Check(Math.Abs(result.SecondStageRpm.Value - secondStage) <= 60,
+                  "the second stage is about " + secondStage + ", got " + result.SecondStageRpm);
+            Check(result.Notes.Any(n => n.Contains("second time")), "the report says the strip changed colour twice");
+        }
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {

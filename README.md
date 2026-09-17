@@ -68,7 +68,7 @@ instead of the repo's file.
    - F1: several clean climbs per gear give tighter values; the report shows the range each value lies in.
    - iRacing: just engaging each gear is enough.
 3. Trigger **StopAndExport**. Files go to `Documents\SimHub\LovelyCarDataCapture\<sim>\`:
-   `<car>.json` and `<car>.report.txt`.
+   `<car>.json` and `<car>.report.txt`. (With OneDrive's folder redirection that is under `OneDrive\Documents`.)
 4. Read the report, then open the JSON in the RPM LED Builder (Import JSON) to check it before submitting.
 
 Switching cars during a capture starts a new one and discards the old, so export first.
@@ -110,7 +110,9 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   climbs, so one bad frame doesn't move it.
 - **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
   washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
-- **Where the strip turns to its redline colour**, and whether it blinks there.
+- **Where the strip turns to its redline colour**, and whether it blinks there. A car that changes
+  colour a second time near the limiter gets that reported too: a car file holds one redline, so only
+  the first is written, and ATSR adds a second stage itself for some cars.
 
 Each light's own colour is learned while the strip is only partly lit, because it can't be in its
 redline state then. That's also why sweeps have to start below the first light.
@@ -189,6 +191,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
 | `ScreenCaptureFps` | `30` | Frames read per second. |
+| `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
 | `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |

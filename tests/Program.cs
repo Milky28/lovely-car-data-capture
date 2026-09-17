@@ -58,6 +58,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen calibration works from a single frame", ScreenCalibrationFromOneFrame);
             Run("Screen capture matches the AMS2 Audi's repo values", ScreenThresholdsMatchRepoFile);
             Run("Screen colors are grouped and named", ScreenColorsAreGrouped);
+            Run("Screen capture reports a two-stage redline", ScreenTwoStageRedline);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);

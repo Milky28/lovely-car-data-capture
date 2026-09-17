@@ -75,7 +75,7 @@ namespace LovelyCarDataCapture.Profile
 
             if (f1) ApplyF1(s, p, baseline, notes, details);
             else if (iracing) ApplyIRacing(s, p, baseline, notes, details);
-            else if (screen) ApplyScreen(screenResult, p, baseline, notes, details);
+            else if (screen) ApplyScreen(screenResult, cfg, p, baseline, notes, details);
             else if (manual) ApplyManualMarks(s, p, baseline, notes, details);
             else ApplyRedlineOnly(s, cfg, p, baseline, notes, details);
 
@@ -166,7 +166,7 @@ namespace LovelyCarDataCapture.Profile
         }
 
         // ---------- rev lights read off the screen ----------
-        private static void ApplyScreen(ScreenLedResult sr, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
+        private static void ApplyScreen(ScreenLedResult sr, CaptureSettings cfg, CarProfile p, CarProfile baseline, List<string> notes, List<string> details)
         {
             var layout = sr.Layout;
             var results = sr.Gears.OrderBy(g => CarProfile.GearRank(g.Gear)).ToList();
@@ -198,6 +198,8 @@ namespace LovelyCarDataCapture.Profile
                 details.Add("  Redline color " + sr.RedlineMeasured + " -> " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
                             (sr.RedlineHighestBelow.HasValue && sr.RedlineLowestAbove.HasValue
                                 ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
+            if (sr.SecondStageRpm.HasValue)
+                details.Add("  Second stage " + sr.SecondStageMeasured + " -> " + (sr.SecondStageColor ?? "?") + " from " + sr.SecondStageRpm + " rpm (not in the file)");
             notes.AddRange(sr.Notes);
 
             if (!mappable)
@@ -252,8 +254,37 @@ namespace LovelyCarDataCapture.Profile
                 notes.Add("The repo file blinks at the redline (redlineBlinkInterval " + p.RedlineBlinkInterval +
                           ") but the lights stayed on above it in the capture. That may be ATSR's own effect rather than the game's.");
 
-            FillUndrivenGears(p, baseline, results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
-                results.Select(r => r.Gear).ToList(), notes, "Many cars use the same lights in every gear; capture the others if they differ.");
+            var bestGear = results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault();
+            var capturedGears = results.Select(r => r.Gear).ToList();
+            var kept = p.GearOrder.Where(g => !capturedGears.Contains(g)).ToList();
+
+            if (baseline != null && bestGear != null && kept.Count > 0 && cfg.CopyMeasuredToOtherGears)
+            {
+                foreach (var gear in kept) p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
+                notes.Add("Gear " + string.Join(", ", kept) + " not captured; gear " + bestGear +
+                          "'s measured values were copied over the repo's, because CopyMeasuredToOtherGears is on.");
+            }
+            else
+            {
+                FillUndrivenGears(p, baseline, bestGear, capturedGears, notes,
+                    "Many cars use the same lights in every gear; capture the others if they differ.");
+                // A gear kept from the repo next to gears just measured leaves one file saying two
+                // different things, which is worth saying out loud.
+                if (baseline != null && bestGear != null && kept.Count > 0)
+                {
+                    var measured = p.LedRpm[bestGear];
+                    var repoRow = baseline.LedRpm.TryGetValue(kept[0], out var r0) ? r0 : null;
+                    if (repoRow != null && repoRow.Length == measured.Length)
+                    {
+                        int worst = Enumerable.Range(0, measured.Length).Where(i => measured[i] > 0 && repoRow[i] > 0)
+                                              .Select(i => Math.Abs(measured[i] - repoRow[i])).DefaultIfEmpty(0).Max();
+                        if (worst > 50)
+                            notes.Add("The gears kept from the repo are up to " + worst + " rpm away from what was just measured, " +
+                                      "so the file now says two different things. Capture those gears too, copy gear " + bestGear +
+                                      "'s values over them in the RPM LED Builder, or set CopyMeasuredToOtherGears to have this done for you.");
+                    }
+                }
+            }
         }
 
         private static void ApplyScreenColors(ScreenLedResult sr, CarProfile p, CarProfile baseline, List<string> notes)

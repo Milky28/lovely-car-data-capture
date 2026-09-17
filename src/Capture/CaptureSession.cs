@@ -53,6 +53,12 @@ namespace LovelyCarDataCapture
         /// <summary>Frames read per second. Higher narrows each threshold a little; 30 is plenty for a slow sweep.</summary>
         public int ScreenCaptureFps { get; set; } = 30;
 
+        /// <summary>
+        /// Put the measured values into gears that weren't driven, instead of keeping the repo file's.
+        /// Most cars use the same lights in every gear, and sweeping all of them takes a long straight.
+        /// </summary>
+        public bool CopyMeasuredToOtherGears { get; set; }
+
         /// <summary>Show a panel over the game saying what the plugin is doing. Mapped buttons say nothing otherwise.</summary>
         public bool ShowOverlay { get; set; } = true;
         /// <summary>Where that panel sits, in screen pixels; drag it to move it. 0,0 places it top left of the main screen.</summary>
