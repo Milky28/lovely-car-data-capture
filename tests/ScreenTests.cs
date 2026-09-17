@@ -244,13 +244,34 @@ namespace LovelyCarDataCapture.Tests
                 new LedColor(190, 96, 60),
             };
             var gaps = new[] { false, false, true, false, false, false };
-            var groups = LedPalette.Group(colors, gaps, new LedColor(190, 96, 60).Hue);
+            var groups = LedPalette.Group(colors, gaps);
             Equal(4, groups.Count, "four colours were told apart");
             Equal("#FFFF0000", groups.First(g => g.Slots.Contains(5)).Hex, "the reddest colour is red");
             Equal("#FF00FF00", groups.First(g => g.Slots.Contains(0)).Hex, "the furthest colour from it is green");
             Equal("#FFFFFF00", groups.First(g => g.Slots.Contains(3)).Hex, "the one below green is yellow");
             Equal("#FFFF8000", groups.First(g => g.Slots.Contains(4)).Hex, "the one above red is orange");
             Check(groups.All(g => !g.Slots.Contains(2)), "the gap has no colour");
+
+            // Measured in an AMS2 Cadillac V-Series.R capture, whose strip flashes blue at the limiter.
+            // Anchoring the scale on the redline colour used to call every light red.
+            var cadillac = new[]
+            {
+                new LedColor(121, 236, 117), new LedColor(121, 236, 117),
+                new LedColor(254, 226, 101), new LedColor(254, 226, 101),
+                new LedColor(246, 84, 46), new LedColor(246, 84, 46),
+                new LedColor(254, 226, 101), new LedColor(254, 226, 101),
+                new LedColor(121, 236, 117), new LedColor(121, 236, 117),
+            };
+            var mirrored = LedPalette.Group(cadillac, null);
+            Equal(3, mirrored.Count, "the mirrored strip uses three colours");
+            string Of(int led) => mirrored.First(g => g.Slots.Contains(led - 1)).Hex;
+            foreach (int led in new[] { 1, 2, 9, 10 }) Equal("#FF00FF00", Of(led), "LED " + led + " is green");
+            foreach (int led in new[] { 3, 4, 7, 8 }) Equal("#FFFFFF00", Of(led), "LED " + led + " is yellow");
+            foreach (int led in new[] { 5, 6 }) Equal("#FFFF0000", Of(led), "LED " + led + " is red");
+
+            // A redline flash is named on its own: nothing says it has to be red.
+            Equal("#FF0000FF", LedPalette.Classify(new LedColor(90, 120, 240), out _), "a blue flash is blue");
+            Equal("#FFFF0000", LedPalette.Classify(new LedColor(230, 70, 50), out _), "a red flash is red");
         }
 
         /// <summary>

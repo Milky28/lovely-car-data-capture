@@ -195,7 +195,7 @@ namespace LovelyCarDataCapture.Profile
                 details.Add("  LED " + string.Join(", ", g.Slots.Select(i => (i + 1).ToString(CultureInfo.InvariantCulture))) +
                             ": " + g.Measured + " -> " + g.Name + " " + g.Hex);
             if (sr.RedlineRpm.HasValue)
-                details.Add("  Redline color " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
+                details.Add("  Redline color " + sr.RedlineMeasured + " -> " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
                             (sr.RedlineHighestBelow.HasValue && sr.RedlineLowestAbove.HasValue
                                 ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
             notes.AddRange(sr.Notes);

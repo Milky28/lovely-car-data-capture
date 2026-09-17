@@ -8,23 +8,35 @@ namespace LovelyCarDataCapture.Screen
     /// Turns colours measured off the screen into car-file colours.
     /// </summary>
     /// <remarks>
-    /// A light rendered in a game is never its own colour: tone mapping, bloom and the cockpit's
-    /// lighting wash it towards white and squeeze the hues together, so a pure green LED can measure
-    /// as rgb(138,177,106) and read as a hue of 93° instead of 120°. Absolute matching would call that
-    /// yellow-green. What survives is the order and the spacing of the hues, so the strip's own
-    /// colours are placed on that scale: the redline colour is taken as red, the furthest colour from
-    /// it as green when it's far enough away, and everything between is stretched to fit. The result
-    /// is a suggestion to check against the game, not a measurement.
+    /// A light rendered in a game is never quite its own colour: tone mapping, bloom and the cockpit's
+    /// lighting wash it towards white and squeeze the hues together, so a pure green LED can measure as
+    /// rgb(138,177,106), a hue of 93° rather than 120°. Matching each colour to the nearest one on its
+    /// own would then call a washed red "orange".
+    /// <para>
+    /// What survives is the order: a strip runs green to red, and no two of its colours are the same.
+    /// So the colours are named together, each one taking a different entry from the ladder and keeping
+    /// them in the order they were measured in, at the smallest total distance. A washed red stays red
+    /// because orange has already been spoken for by the colour above it.
+    /// </para>
     /// </remarks>
     internal static class LedPalette
     {
-        private static readonly Tuple<string, string, double>[] Ladder =
+        private sealed class Step
         {
-            Tuple.Create("red", "#FFFF0000", 0.0),
-            Tuple.Create("orange", "#FFFF8000", 30.0),
-            Tuple.Create("yellow", "#FFFFFF00", 60.0),
-            Tuple.Create("green", "#FF00FF00", 120.0),
-            Tuple.Create("blue", "#FF0000FF", 240.0),
+            public Step(string name, string hex, double hue) { Name = name; Hex = hex; Hue = hue; }
+            public readonly string Name, Hex;
+            public readonly double Hue;
+        }
+
+        private static readonly Step[] Ladder =
+        {
+            new Step("red", "#FFFF0000", 0),
+            new Step("orange", "#FFFF8000", 30),
+            new Step("yellow", "#FFFFFF00", 60),
+            new Step("green", "#FF00FF00", 120),
+            new Step("cyan", "#FF00FFFF", 180),
+            new Step("blue", "#FF0000FF", 240),
+            new Step("purple", "#FFFF00FF", 300),
         };
 
         /// <summary>Hue spread within which two lights count as the same colour.</summary>
@@ -48,11 +60,18 @@ namespace LovelyCarDataCapture.Screen
             public List<int> Slots = new List<int>();
         }
 
-        /// <summary>
-        /// Groups the measured colours and names them. <paramref name="redlineHue"/> is the hue the
-        /// whole strip turns above the redline, or -1 when no colour change was seen.
-        /// </summary>
-        public static List<ColorGroup> Group(IList<LedColor> perSlot, IList<bool> isGap, double redlineHue)
+        /// <summary>Names one colour on its own, for the redline flash. Nothing constrains it, so it's the nearest.</summary>
+        public static string Classify(LedColor color, out string name)
+        {
+            double hue = color.Hue;
+            if (hue < 0) { name = "white"; return "#FFFFFFFF"; }
+            var best = Ladder.OrderBy(step => Distance(hue, step.Hue)).First();
+            name = best.Name;
+            return best.Hex;
+        }
+
+        /// <summary>Groups the measured colours by hue and names them.</summary>
+        public static List<ColorGroup> Group(IList<LedColor> perSlot, IList<bool> isGap)
         {
             var lights = new List<Tuple<int, double>>();
             for (int i = 0; i < perSlot.Count; i++)
@@ -87,24 +106,58 @@ namespace LovelyCarDataCapture.Screen
                 g.Slots.Sort();
             }
 
-            groups = groups.OrderBy(g => g.Hue).ToList();
-            double anchor = redlineHue >= 0 ? redlineHue : groups[0].Hue;
-            double spread = groups[groups.Count - 1].Hue - anchor;
-            // Far-apart colours: assume the furthest is green and stretch to match. Otherwise fall back
-            // to the compression seen in practice (about two thirds of the real hue range).
-            double scale = spread > 35 ? 120.0 / spread : 1.5;
-
-            foreach (var g in groups)
-            {
-                double corrected = (g.Hue - anchor) * scale;
-                var best = Ladder.OrderBy(l => Math.Abs(l.Item3 - corrected)).First();
-                g.Name = best.Item1;
-                g.Hex = best.Item2;
-            }
-            return groups;
+            Name(groups.OrderBy(g => g.Hue).ToList());
+            return groups.OrderBy(g => g.Hue).ToList();
         }
 
-        /// <summary>True when two groups landed on the same colour, or sit so close that the split is doubtful.</summary>
+        /// <summary>
+        /// Gives each group a different colour from the ladder, in hue order, at the smallest total
+        /// distance. With more groups than the ladder has entries there's nothing to share out, so each
+        /// takes its nearest.
+        /// </summary>
+        private static void Name(List<ColorGroup> groups)
+        {
+            if (groups.Count > Ladder.Length)
+            {
+                foreach (var g in groups) g.Hex = Classify(g.Measured, out g.Name);
+                return;
+            }
+
+            int n = groups.Count, m = Ladder.Length;
+            // best[i, j]: cheapest way to name groups i.. using ladder entries j..
+            var best = new double[n + 1, m + 1];
+            var pick = new int[n + 1, m + 1];
+            for (int j = 0; j <= m; j++) best[n, j] = 0;
+            for (int i = n - 1; i >= 0; i--)
+            {
+                best[i, m] = double.MaxValue / 4;
+                for (int j = m - 1; j >= 0; j--)
+                {
+                    double take = Distance(groups[i].Hue, Ladder[j].Hue) + best[i + 1, j + 1];
+                    double skip = best[i, j + 1];
+                    if (take <= skip) { best[i, j] = take; pick[i, j] = j; }
+                    else { best[i, j] = skip; pick[i, j] = pick[i, j + 1]; }
+                }
+            }
+
+            int at = 0;
+            for (int i = 0; i < n; i++)
+            {
+                int chosen = pick[i, at];
+                groups[i].Name = Ladder[chosen].Name;
+                groups[i].Hex = Ladder[chosen].Hex;
+                at = chosen + 1;
+            }
+        }
+
+        /// <summary>Distance between two hues the short way round the circle.</summary>
+        private static double Distance(double a, double b)
+        {
+            double d = Math.Abs(a - b) % 360;
+            return d > 180 ? 360 - d : d;
+        }
+
+        /// <summary>True when two groups sit so close that the split between them is doubtful.</summary>
         public static bool Doubtful(List<ColorGroup> groups)
         {
             for (int i = 1; i < groups.Count; i++)

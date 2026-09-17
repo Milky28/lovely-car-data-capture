@@ -18,6 +18,8 @@ namespace LovelyCarDataCapture.Screen
         public int? RedlineRpm;
         public int? RedlineHighestBelow, RedlineLowestAbove;
         public string RedlineColor;
+        /// <summary>What the strip actually measured above the redline, before it was matched to a colour.</summary>
+        public LedColor RedlineMeasured;
         /// <summary>Length of one dark phase above the redline, in milliseconds; null when the lights don't blink.</summary>
         public int? BlinkIntervalMs;
         public bool BlinkSeen;
@@ -207,8 +209,8 @@ namespace LovelyCarDataCapture.Screen
             if (above.Count > 0)
             {
                 var mean = new LedColor((int)above.Average(c => c.R), (int)above.Average(c => c.G), (int)above.Average(c => c.B));
-                var groups = LedPalette.Group(new[] { mean }, null, mean.Hue);
-                result.RedlineColor = groups.Count > 0 ? groups[0].Hex : null;
+                result.RedlineColor = LedPalette.Classify(mean, out _);
+                result.RedlineMeasured = mean;
             }
         }
 
@@ -242,15 +244,17 @@ namespace LovelyCarDataCapture.Screen
                     : new LedColor((int)(sums[s, 0] / counts[s]), (int)(sums[s, 1] / counts[s]), (int)(sums[s, 2] / counts[s]));
             }
 
-            double redlineHue = -1;
-            if (result.RedlineColor != null)
-            {
-                var above = _samples.Where(s => result.RedlineLowestAbove.HasValue && s.Rpm > result.RedlineLowestAbove.Value)
-                                    .SelectMany(s => s.Colors).Where(c => c.Hue >= 0).ToList();
-                if (above.Count > 0) redlineHue = Median(above.Select(c => c.Hue).ToList());
-            }
-            result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap, redlineHue);
+            result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap);
             result.ColorsDoubtful = LedPalette.Doubtful(result.ColorGroups);
+
+            // The flash is usually one of the strip's own colours. Naming it against them rather than
+            // on its own keeps a washed red red, where alone it would read as orange; a flash that
+            // matches nothing on the strip, like the blue some cars use, still gets named for itself.
+            if (result.RedlineMeasured.Hue >= 0)
+            {
+                var same = result.ColorGroups.FirstOrDefault(g => Math.Abs(g.Hue - result.RedlineMeasured.Hue) <= LedPalette.SameColorDegrees);
+                if (same != null) result.RedlineColor = same.Hex;
+            }
             if (result.ColorsDoubtful)
                 result.Notes.Add("Some colours are too close to tell apart on screen; check them against the game.");
         }
