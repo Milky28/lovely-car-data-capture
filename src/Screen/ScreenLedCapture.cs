@@ -383,6 +383,15 @@ namespace LovelyCarDataCapture.Screen
             return mean < 0 ? mean + 360 : mean;
         }
 
+        /// <summary>Widest RPM step between the two frames either side of a redline crossing that still pins it down.</summary>
+        private const int MaxCrossingStepRpm = 150;
+
+        /// <summary>
+        /// Fewest flips between the redline colour and the strip's own before it counts as a flash. LMU's
+        /// SC63 gave 76; revs bouncing on a limiter right at the redline give a handful.
+        /// </summary>
+        private const int MinFlashes = 10;
+
         /// <summary>How long the strip has to be clear of its redline state on the near side of a crossing for it to count.</summary>
         private const int ClearRunMs = 200;
 
@@ -487,6 +496,9 @@ namespace LovelyCarDataCapture.Screen
             {
                 if (!redline[i].HasValue || !redline[i - 1].HasValue) continue;
                 if (_samples[i].Gear != _samples[i - 1].Gear) continue;
+                // The middle of two frames far apart in RPM says little: leaving the limiter, the revs
+                // can drop 800 rpm between frames, which put the ACC Huracán's 4th gear redline 150 low.
+                if (Math.Abs(_samples[i].Rpm - _samples[i - 1].Rpm) > MaxCrossingStepRpm) continue;
                 double at = (_samples[i].Rpm + _samples[i - 1].Rpm) / 2.0;
                 if (redline[i].Value && !redline[i - 1].Value && _samples[i].Rpm > _samples[i - 1].Rpm && Clear(i - 1, -1))
                 {
@@ -905,7 +917,7 @@ namespace LovelyCarDataCapture.Screen
                 if (length > MaxFlashPhaseMs) continue;
                 (runs[k].Item1 ? red : own).Add(length);
             }
-            if (own.Count < 5) return;
+            if (own.Count < MinFlashes) return;
             result.FlashCount = own.Count;
             result.FlashOwnMs = (int)Math.Round(Median(own));
             if (red.Count > 0) result.FlashRedlineMs = (int)Math.Round(Median(red));

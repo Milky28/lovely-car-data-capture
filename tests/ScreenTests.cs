@@ -633,6 +633,15 @@ namespace LovelyCarDataCapture.Tests
             var composed = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 18));
             if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
             Equal(0, composed.Profile.RedlineBlinkInterval, "the new file doesn't blink");
+
+            // A second drive, where 4th gear left the limiter with an 800 rpm drop between two frames.
+            var again = new CaptureSession("AssettoCorsaCompetizione", "lamborghini_huracan_gt3_evo2");
+            foreach (var f in LoadFrames(DataPath("acc-lamborghini-huracan-gt3-evo2-b.frames.csv"))) again.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var second = again.Screen.Result();
+            Check(Math.Abs(second.RedlineByGear["4"].Rpm - 8000) <= 30, "4th gear's redline is about 8000, got " + second.RedlineByGear["4"].Rpm);
+            Check(!second.FlashOwnMs.HasValue, "revs bouncing on the limiter aren't a flash");
+            var againFile = ProfileComposer.Compose(again, new CaptureSettings(), null, new DateTime(2026, 9, 18)).Profile;
+            Check(againFile.GearOrder.All(g => Math.Abs(againFile.LedRpm[g][0] - 8000) <= 30), "every gear's redline is about 8000");
             var row = composed.Profile.LedRpm["3"];
             var file = new[] { 5700, 6000, 0, 6300, 6600, 6800, 7000, 7200, 7400, 0, 7600, 7800 };
             for (int i = 0; i < 12; i++)
