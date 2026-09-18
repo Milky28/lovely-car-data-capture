@@ -614,6 +614,31 @@ namespace LovelyCarDataCapture.Tests
             Equal("#FFFF0000", p.LedColor[0], "the redline is red");
         }
 
+        private static void ScreenRealAccIndicators()
+        {
+            var session = new CaptureSession("AssettoCorsaCompetizione", "lamborghini_huracan_gt3_evo2");
+            foreach (var f in LoadFrames(DataPath("acc-lamborghini-huracan-gt3-evo2.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+
+            // Traction control lights LEDs 1-2 blue and ABS lights 11-12 yellow, at any RPM.
+            Check(screen.Notes.Any(n => n.Contains("LED 1, 2 blue") && n.Contains("LED 11, 12 yellow")), "both indicators were recognised and named");
+            Check(!screen.BlinkSeen, "two single dark frames at the limiter aren't a blink");
+            Equal("#FF0000FF", screen.RedlineColor, "the strip turns blue at the redline");
+            string ColourOf(int led) => screen.ColorGroups.First(g => g.Slots.Contains(led - 1)).Hex;
+            Equal("#FFFF0000", ColourOf(12), "LED 12 is red, not the ABS light's yellow");
+            Equal("#FF00FF00", ColourOf(1), "LED 1 is green, not the traction control's blue");
+            Check(screen.RedlineByGear.Values.All(g => Math.Abs(g.Rpm - 8000) <= 90), "no gear's redline comes from the traction control: " +
+                  string.Join(", ", screen.RedlineByGear.Select(g => g.Key + " " + g.Value.Rpm)));
+
+            var composed = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 18));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
+            Equal(0, composed.Profile.RedlineBlinkInterval, "the new file doesn't blink");
+            var row = composed.Profile.LedRpm["3"];
+            var file = new[] { 5700, 6000, 0, 6300, 6600, 6800, 7000, 7200, 7400, 0, 7600, 7800 };
+            for (int i = 0; i < 12; i++)
+                Check(Math.Abs(row[i + 1] - file[i]) <= 50, "LED " + (i + 1) + " is about " + file[i] + ", got " + row[i + 1]);
+        }
+
         private static string AccMcLarenJson() => @"{
   ""carName"": ""McLaren 720S GT3 EVO"",
   ""carId"": ""mclaren_720s_gt3_evo"",

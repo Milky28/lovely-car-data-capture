@@ -155,6 +155,8 @@ namespace LovelyCarDataCapture.Screen
             }
             var layout = result.Layout;
 
+            DropIndicators(layout, result);
+
             var lit = new bool[_samples.Count][];
             for (int i = 0; i < _samples.Count; i++)
             {
@@ -226,6 +228,97 @@ namespace LovelyCarDataCapture.Screen
             if (layout.GapCount > 0)
                 result.Notes.Add("The strip has " + layout.GapCount + " gap(s) where the spacing leaves room but nothing ever lights.");
             return result;
+        }
+
+        /// <summary>How far from its usual colour a light has to be to count as showing something else.</summary>
+        private const double IndicatorDegrees = 30;
+
+        /// <summary>
+        /// Each slot's usual colour: the one it shows most often while lit. A light climbing through the
+        /// strip stays lit for seconds in its own colour, where an indicator flickers - the ACC Huracán
+        /// GT3 Evo2 lights its first two blue for traction control and its last two yellow for ABS, both
+        /// at any RPM. Frames with several lights all one colour are left out: that's the redline, a
+        /// blink coming back, or a fade (ACC) part way into one, and the limiter is held for long.
+        /// </summary>
+        private double[] OwnHues(StripLayout layout)
+        {
+            var perSlot = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<double>()).ToArray();
+            foreach (var sample in _samples)
+            {
+                var slots = sample.X.Select(layout.SlotOf).ToArray();
+                var lights = Enumerable.Range(0, slots.Length).Where(b => slots[b] >= 0 && sample.Colors[b].Hue >= 0).ToList();
+                if (lights.Count >= 3 && Spread(lights.Select(b => sample.Colors[b].Hue).ToList()) <= OneColourDegrees) continue;
+                foreach (int b in lights) perSlot[slots[b]].Add(sample.Colors[b].Hue);
+            }
+            return perSlot.Select(h => h.Count == 0 ? -1 : UsualHue(h)).ToArray();
+        }
+
+        /// <summary>The middle of the most crowded 30-degree stretch of the hue circle.</summary>
+        private static double UsualHue(List<double> hues)
+        {
+            double best = hues[0];
+            int most = -1;
+            foreach (var centre in hues.Where((h, i) => i % Math.Max(1, hues.Count / 200) == 0))
+            {
+                int count = hues.Count(h => HueDistance(h, centre) <= 15);
+                if (count > most) { most = count; best = centre; }
+            }
+            return CircularMean(hues.Where(h => HueDistance(h, best) <= 15));
+        }
+
+        /// <summary>
+        /// Takes out lights showing something other than the rev count. ACC's Huracán GT3 Evo2 turns
+        /// its first two lights blue while traction control works, at whatever RPM that happens: read
+        /// as rev lights, they came on 400 rpm early and looked like the strip changing to a blue
+        /// redline in first gear. A light far from its usual colour is an indicator when the strip
+        /// isn't full, or when it's a few lights among many still showing their own colours; when the
+        /// whole strip turns one colour, or most of it changes, that's the redline and stays.
+        /// </summary>
+        private void DropIndicators(StripLayout layout, ScreenLedResult result)
+        {
+            int lights = layout.LedNumber - layout.GapCount;
+            var own = OwnHues(layout);
+            var seen = new int[layout.LedNumber];
+            var colours = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<LedColor>()).ToArray();
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                var slots = s.X.Select(layout.SlotOf).ToArray();
+                var off = Enumerable.Range(0, slots.Length)
+                                    .Where(b => slots[b] >= 0 && own[slots[b]] >= 0 && s.Colors[b].Hue >= 0 &&
+                                                HueDistance(s.Colors[b].Hue, own[slots[b]]) > IndicatorDegrees)
+                                    .ToList();
+                if (off.Count == 0) continue;
+                int litNow = slots.Count(x => x >= 0);
+                var huesNow = Enumerable.Range(0, slots.Length).Where(b => slots[b] >= 0 && s.Colors[b].Hue >= 0)
+                                        .Select(b => s.Colors[b].Hue).ToList();
+                bool full = litNow >= lights - 1;
+                bool oneColour = huesNow.Count >= 2 && Spread(huesNow) <= OneColourDegrees;
+                if (full && (oneColour || off.Count * 2 >= litNow)) continue;     // the redline state
+                // A game that fades (ACC) catches the strip part way into or out of its redline colour:
+                // several lights, all that colour. An indicator is one or two lights.
+                if (!full && oneColour && off.Count == litNow && litNow >= 3) continue;
+
+                foreach (int b in off) { seen[slots[b]]++; colours[slots[b]].Add(s.Colors[b]); }
+                var keep = Enumerable.Range(0, slots.Length).Where(b => !off.Contains(b)).ToList();
+                s.X = keep.Select(b => s.X[b]).ToArray();
+                s.Colors = keep.Select(b => s.Colors[b]).ToArray();
+                _samples[i] = s;
+            }
+            var used = Enumerable.Range(0, layout.LedNumber).Where(x => seen[x] >= 10).ToList();
+            if (used.Count == 0) return;
+            // Named per light, then grouped: one car can have two indicators, traction control in blue
+            // on one end and ABS in yellow on the other.
+            var named = used.Select(x =>
+            {
+                var c = colours[x];
+                var mean = new LedColor((int)c.Average(k => k.R), (int)c.Average(k => k.G), (int)c.Average(k => k.B));
+                LedPalette.Classify(mean, out string name);
+                return new { Led = x + 1, Name = name };
+            }).GroupBy(n => n.Name).Select(g => "LED " + string.Join(", ", g.Select(n => n.Led)) + " " + g.Key);
+            result.Notes.Add("Some lights sometimes showed another colour while the rest of the strip didn't change (" +
+                             string.Join("; ", named) + ") - indicators such as traction control or ABS, not the rev count. " +
+                             "Those sightings were ignored (" + seen.Sum() + " in all).");
         }
 
         /// <summary>Below this saturation a blob might be a reflection rather than a light.</summary>
@@ -321,20 +414,8 @@ namespace LovelyCarDataCapture.Screen
         {
             var layout = result.Layout;
             int lights = layout.LedNumber - layout.GapCount;
-            var ownHue = new double[layout.LedNumber];
-            var ownCount = new int[layout.LedNumber];
-            for (int i = 0; i < _samples.Count; i++)
-            {
-                if (lit[i].Count(v => v) >= lights) continue;   // full strip: may be the redline
-                for (int s = 0; s < layout.LedNumber; s++)
-                {
-                    if (hues[i][s] < 0) continue;
-                    ownHue[s] += hues[i][s];
-                    ownCount[s]++;
-                }
-            }
-            for (int s = 0; s < layout.LedNumber; s++) ownHue[s] = ownCount[s] > 0 ? ownHue[s] / ownCount[s] : -1;
-            if (ownCount.Count(c => c > 0) < 2)
+            var ownHue = OwnHues(layout);
+            if (ownHue.Count(h => h >= 0) < 2)
             {
                 result.Notes.Add("The lights were never seen partly lit, so their own colours couldn't be told from the redline colour. Rev up slowly from idle.");
                 return;
@@ -348,6 +429,10 @@ namespace LovelyCarDataCapture.Screen
             var redline = new bool?[_samples.Count];
             for (int i = 0; i < _samples.Count; i++)
             {
+                // The redline is at or above the last light, so the strip is full there. Fewer lights
+                // changing colour is something else - an indicator like ACC's blue traction control.
+                int litNow = lit[i].Count(v => v);
+                bool partial = litNow < lights - 1;
                 int known = 0, changed = 0;
                 var now = new List<double>();
                 var own = new List<double>();
@@ -362,6 +447,15 @@ namespace LovelyCarDataCapture.Screen
                 if (known < 2) continue;
                 bool oneColourNow = Spread(now) <= OneColourDegrees;
                 bool severalOwnColours = Spread(own) > RedlineHueShift;
+                if (partial)
+                {
+                    // Several lights, every one out of its own colour and all the same: a game that
+                    // fades (ACC) caught part way into or out of its redline colour. Anything else short
+                    // of a full strip is below the redline - one or two lights in another colour are an
+                    // indicator like traction control.
+                    redline[i] = known >= 3 && changed == known && oneColourNow;
+                    continue;
+                }
                 redline[i] = (oneColourNow && severalOwnColours && changed > 0) || changed * 2 > known;
             }
 
@@ -552,6 +646,12 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Longest dark gap that still counts as one blink rather than the lights genuinely going off.</summary>
         private const int MaxBlinkMs = 700;
 
+        /// <summary>Fewest dark frames in a row that make a blink.</summary>
+        private const int MinBlinkFrames = 2;
+
+        /// <summary>Fewest blinks before the strip counts as blinking. Holding the limiter gives dozens.</summary>
+        private const int MinBlinks = 3;
+
         /// <summary>How far above the redline a frame can still count towards a light's threshold.</summary>
         private const int RedlineMarginRpm = 50;
 
@@ -594,6 +694,9 @@ namespace LovelyCarDataCapture.Screen
                     if (Full(j)) { after = j; break; }
                 long length = _samples[end].TimeMs - _samples[start].TimeMs;
                 if (before < 0 || after < 0 || length > MaxBlinkMs) continue;
+                // One dark frame is a dropped or half-drawn frame, not a blink: the ACC Huracán GT3 Evo2
+                // showed two of them at the limiter and doesn't blink. Real blinks are dark for several.
+                if (end - start < MinBlinkFrames) continue;
 
                 // The fade frames go with the blink: they're no more a light switching than the dark is.
                 for (int f = before + 1; f < after; f++) blink[f] = true;
@@ -606,7 +709,7 @@ namespace LovelyCarDataCapture.Screen
                 lastBlink = _samples[after].TimeMs;
             }
 
-            result.BlinkSeen = darkLengths.Count >= 2;
+            result.BlinkSeen = darkLengths.Count >= MinBlinks;
             if (!result.BlinkSeen) return blink;
 
             result.BlinkIntervalMs = (int)Math.Round(Median(darkLengths));
