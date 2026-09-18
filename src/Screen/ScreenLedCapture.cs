@@ -91,6 +91,8 @@ namespace LovelyCarDataCapture.Screen
         private readonly StripCalibration _calibration = new StripCalibration();
         /// <summary>Per frame, whether the strip was in its redline state; null where it couldn't be told.</summary>
         private bool?[] _redline;
+        /// <summary>Frames where an indicator was taken out, so a light looks dark that may really be lit.</summary>
+        private bool[] _indicatorFrame = new bool[0];
 
         public bool HasData => _recorded.Count > 0;
         public int SampleCount => _recorded.Count;
@@ -189,9 +191,28 @@ namespace LovelyCarDataCapture.Screen
             // Then the lag, so everything after reads each frame against the revs it was showing. The
             // blinks are found again on the moved RPMs: where the blinking starts is one of them.
             RemoveDisplayLag(lit, blink, result);
-            blink = FindBlinks(lit, layout, result);
+            var firstLook = new ScreenLedResult();
+            blink = FindBlinks(lit, layout, firstLook);
+            result.BlinkSeen = firstLook.BlinkSeen;
 
             FindRedline(lit, hues, result);
+            // Found once more with the redline known: PMR's C8.R comes back from each dark phase with only
+            // some of its lights, in its blue redline colour, which isn't a full strip but is the redline.
+            blink = FindBlinks(lit, layout, result, _redline);
+            // A frame an indicator was taken out of can't say whether that light was lit, so it doesn't
+            // count towards any threshold: kept in, the light seems to go dark and come straight back on.
+            for (int i = 0; i < blink.Length && i < _indicatorFrame.Length; i++)
+                if (_indicatorFrame[i]) blink[i] = true;
+            // Just after a shift the screen still shows the old gear for as long as the game lags - about
+            // 90 ms in PMR - while telemetry already has the new gear and its lower revs: every upshift
+            // would read as the lights coming on far too low. Those frames count for nothing.
+            long settle = result.DisplayLagMs + ShiftSettleMs;
+            long gearStart = 0;
+            for (int i = 0; i < blink.Length; i++)
+            {
+                if (i == 0 || _samples[i].Gear != _samples[i - 1].Gear) gearStart = _samples[i].TimeMs;
+                if (i > 0 && _samples[i].TimeMs - gearStart < settle) blink[i] = true;
+            }
             if (!result.RedlineRpm.HasValue && result.BlinkFromRpm.HasValue)
             {
                 // The strip blinks without changing colour: where the blinking starts is the redline.
@@ -278,6 +299,7 @@ namespace LovelyCarDataCapture.Screen
         {
             int lights = layout.LedNumber - layout.GapCount;
             var own = OwnHues(layout);
+            _indicatorFrame = new bool[_samples.Count];
             var seen = new int[layout.LedNumber];
             var colours = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<LedColor>()).ToArray();
             for (int i = 0; i < _samples.Count; i++)
@@ -300,6 +322,7 @@ namespace LovelyCarDataCapture.Screen
                 if (!full && oneColour && off.Count == litNow && litNow >= 3) continue;
 
                 foreach (int b in off) { seen[slots[b]]++; colours[slots[b]].Add(s.Colors[b]); }
+                _indicatorFrame[i] = true;
                 var keep = Enumerable.Range(0, slots.Length).Where(b => !off.Contains(b)).ToList();
                 s.X = keep.Select(b => s.X[b]).ToArray();
                 s.Colors = keep.Select(b => s.Colors[b]).ToArray();
@@ -382,6 +405,12 @@ namespace LovelyCarDataCapture.Screen
             double mean = Math.Atan2(y, x) * 180 / Math.PI;
             return mean < 0 ? mean + 360 : mean;
         }
+
+        /// <summary>How long after a gear change, beyond the display lag, before frames count again.</summary>
+        private const int ShiftSettleMs = 50;
+
+        /// <summary>Longest run of dark frames a redline crossing may be looked for across.</summary>
+        private const int DarkBridgeMs = 200;
 
         /// <summary>Widest RPM step between the two frames either side of a redline crossing that still pins it down.</summary>
         private const int MaxCrossingStepRpm = 150;
@@ -494,18 +523,24 @@ namespace LovelyCarDataCapture.Screen
             }
             for (int i = 1; i < _samples.Count; i++)
             {
-                if (!redline[i].HasValue || !redline[i - 1].HasValue) continue;
-                if (_samples[i].Gear != _samples[i - 1].Gear) continue;
+                if (!redline[i].HasValue) continue;
+                // The frame before, looking past dark ones: PMR's C8.R goes from its own colours through a
+                // dark frame straight into a blinking blue, never showing the two side by side.
+                int p = i - 1;
+                while (p >= 0 && !redline[p].HasValue && _samples[p].Gear == _samples[i].Gear &&
+                       _samples[i].TimeMs - _samples[p].TimeMs <= DarkBridgeMs) p--;
+                if (p < 0 || !redline[p].HasValue || _samples[i].TimeMs - _samples[p].TimeMs > DarkBridgeMs) continue;
+                if (_samples[i].Gear != _samples[p].Gear) continue;
                 // The middle of two frames far apart in RPM says little: leaving the limiter, the revs
                 // can drop 800 rpm between frames, which put the ACC Huracán's 4th gear redline 150 low.
-                if (Math.Abs(_samples[i].Rpm - _samples[i - 1].Rpm) > MaxCrossingStepRpm) continue;
-                double at = (_samples[i].Rpm + _samples[i - 1].Rpm) / 2.0;
-                if (redline[i].Value && !redline[i - 1].Value && _samples[i].Rpm > _samples[i - 1].Rpm && Clear(i - 1, -1))
+                if (Math.Abs(_samples[i].Rpm - _samples[p].Rpm) > MaxCrossingStepRpm) continue;
+                double at = (_samples[i].Rpm + _samples[p].Rpm) / 2.0;
+                if (redline[i].Value && !redline[p].Value && _samples[i].Rpm > _samples[p].Rpm && Clear(p, -1))
                 {
                     risingAt.Add(at);
                     Add(risingByGear, _samples[i].Gear, at);
                 }
-                if (!redline[i].Value && redline[i - 1].Value && _samples[i].Rpm < _samples[i - 1].Rpm && Clear(i, 1))
+                if (!redline[i].Value && redline[p].Value && _samples[i].Rpm < _samples[p].Rpm && Clear(i, 1))
                 {
                     fallingAt.Add(at);
                     Add(fallingByGear, _samples[i].Gear, at);
@@ -675,7 +710,7 @@ namespace LovelyCarDataCapture.Screen
         /// on knowing the redline: a short run of fully dark frames with the whole strip lit on both
         /// sides of it. The lights never all go off between one frame and the next for any other reason.
         /// </summary>
-        private bool[] FindBlinks(bool[][] lit, StripLayout layout, ScreenLedResult result)
+        private bool[] FindBlinks(bool[][] lit, StripLayout layout, ScreenLedResult result, bool?[] redline = null)
         {
             int n = _samples.Count;
             var blink = new bool[n];
@@ -683,7 +718,7 @@ namespace LovelyCarDataCapture.Screen
             if (lights < 2) return blink;
             var count = lit.Select(f => f.Count(v => v)).ToArray();
             // One light missed in a frame shouldn't hide a full strip.
-            bool Full(int i) => count[i] >= lights - 1;
+            bool Full(int i) => count[i] >= lights - 1 || (redline != null && redline[i] == true && count[i] >= 2);
 
             var darkLengths = new List<double>();
             var onsets = new List<double>();
