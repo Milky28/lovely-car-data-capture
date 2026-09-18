@@ -434,6 +434,14 @@ namespace LovelyCarDataCapture
                 reportPath = Path.Combine(root, Slug.Make(session.GameName), fileName + ".report.txt");
             }
 
+            string framesPath = null;
+            if (Settings.SaveCaptureFrames && session.Screen.HasData)
+            {
+                framesPath = Path.Combine(Path.GetDirectoryName(path), Path.GetFileNameWithoutExtension(path) + ".frames.csv");
+                result.Report.Add("");
+                result.Report.Add("Raw frames: " + framesPath);
+            }
+
             var utf8 = new UTF8Encoding(false);
             if (Settings.CopyToAtsrDeveloperFolder) CopyToAtsrDeveloperFolder(session.CarId, json, result.Report, utf8);
 
@@ -442,6 +450,12 @@ namespace LovelyCarDataCapture
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, json, utf8);
                 File.WriteAllText(reportPath, string.Join(Environment.NewLine, result.Report) + Environment.NewLine, utf8);
+                if (framesPath != null)
+                {
+                    lock (_lock)
+                        using (var writer = new StreamWriter(framesPath, false, utf8))
+                            session.Screen.WriteFrames(writer);
+                }
                 _lastExportPath = path;
                 _lastReportPath = reportPath;
                 SimHub.Logging.Current.Info(LogPrefix + "Exported " + path + " (" + result.Source + "). Report: " + reportPath);

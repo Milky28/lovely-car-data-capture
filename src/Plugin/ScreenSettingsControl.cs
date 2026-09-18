@@ -161,6 +161,11 @@ namespace LovelyCarDataCapture.Plugin
                                      "For when only one gear could be swept cleanly. Two gears that agree are pooled anyway. Without " +
                                      "this, unswept gears keep the repo file's values and the file ends up saying two different things.",
                                      v => _settings.CopyMeasuredToOtherGears = v));
+            panel.Children.Add(Check("Keep each capture's raw frames", settings.SaveCaptureFrames,
+                                     "Writes <car>.frames.csv next to the export: every frame's RPM and the lights seen in it. " +
+                                     "It lets a capture be checked again later, by a newer version of the plugin or when a value " +
+                                     "looks odd, without driving it again. A few MB for a long capture.",
+                                     v => _settings.SaveCaptureFrames = v));
             panel.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
                                      "Looks the car up on GitHub, read-only, and keeps its name, colours, gaps and anything not measured.",
                                      v => _settings.UseRepoFile = v));

@@ -51,10 +51,38 @@ namespace LovelyCarDataCapture.Tests
             public List<LitBlob> Blobs = new List<LitBlob>();
         }
 
-        private static List<RecordedFrame> LoadRecording()
+        private static List<RecordedFrame> LoadRecording() => LoadFrames(DataPath("ams2-audi-r8-lms-gt3-evo-ii.csv"));
+
+        /// <summary>
+        /// Runs a saved capture's frames (--replay frames.csv [--repo-file car.json] [--game name] [--car id])
+        /// back through the composer and prints the report, as if it had just been exported.
+        /// </summary>
+        private static void Replay(string[] args)
+        {
+            string Arg(string name, string fallback)
+            {
+                for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) return args[i + 1];
+                return fallback;
+            }
+            string frames = Arg("--replay", null);
+            string repoFile = Arg("--repo-file", null);
+            string game = Arg("--game", "Automobilista2");
+            string car = Arg("--car", Path.GetFileNameWithoutExtension(frames).Replace(".frames", ""));
+
+            var session = new CaptureSession(game, car);
+            foreach (var f in LoadFrames(frames)) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var lookup = repoFile == null ? null
+                : new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = Path.GetFileName(repoFile), Text = File.ReadAllText(repoFile) };
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), lookup, DateTime.Now);
+            Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+            Console.WriteLine();
+            Console.WriteLine(result.Profile.ToJson());
+        }
+
+        private static List<RecordedFrame> LoadFrames(string path)
         {
             var frames = new List<RecordedFrame>();
-            foreach (var line in File.ReadLines(DataPath("ams2-audi-r8-lms-gt3-evo-ii.csv")).Skip(1))
+            foreach (var line in File.ReadLines(path).Skip(1))
             {
                 var cells = line.Split(',');
                 if (cells.Length < 5) continue;
@@ -396,6 +424,66 @@ namespace LovelyCarDataCapture.Tests
             Check(row[0] >= row[4], "the redline is not below the last light");
             Check(p.GearOrder.All(g => p.LedRpm[g].SequenceEqual(row)), "every gear got the pooled values");
             Check(result.Report.Any(l => l.Contains("pooled")), "the report says the gears were pooled");
+        }
+
+        /// <summary>
+        /// The AMS2 BMW M8 GTE case: above the redline the strip blinks - dark 100 ms, lit 100 ms - and
+        /// keeps its own colours while it does. Held at the limiter for seconds at 60 fps, the blinks'
+        /// dark-then-lit edges used to outnumber the real switch-ons and every light came out at the
+        /// limiter's RPM. They must be recognised as blinks, timed, and kept out of the thresholds.
+        /// </summary>
+        private static void ScreenBlinkingStripIsNotAThreshold()
+        {
+            var colours = new[] { new LedColor(110, 239, 102), new LedColor(250, 240, 90), new LedColor(252, 190, 60), new LedColor(247, 52, 41) };
+            var thresholds = new[] { 6000, 6120, 6240, 6360 };
+            const int redline = 6600;
+
+            var session = new CaptureSession("Automobilista2", "Blinking GTE");
+            session.RecordCar("Blinking GTE", "GTE");
+            long time = 0;
+            List<LitBlob> Frame(int rpm)
+            {
+                var blobs = new List<LitBlob>();
+                bool dark = rpm > redline && (time / 100) % 2 == 1;
+                if (dark) return blobs;
+                for (int led = 0; led < thresholds.Length; led++)
+                {
+                    if (rpm <= thresholds[led]) continue;
+                    blobs.Add(new LitBlob { Left = 100 + led * 30 - 9, Right = 100 + led * 30 + 9, Color = colours[led] });
+                }
+                return blobs;
+            }
+
+            var random = new Random(8);
+            foreach (var gear in new[] { "2", "3" })
+            {
+                for (int climb = 0; climb < 3; climb++)
+                {
+                    for (int rpm = 5600; rpm < 6680; rpm += 8)
+                        session.Screen.Record(gear, rpm, time += 16, Frame(rpm));
+                    // Three seconds on the limiter, the revs bouncing just under it.
+                    for (int f = 0; f < 190; f++)
+                    {
+                        int rpm = 6650 + random.Next(0, 50);
+                        session.Screen.Record(gear, rpm, time += 16, Frame(rpm));
+                    }
+                    for (int rpm = 6680; rpm >= 5600; rpm -= 40) session.Screen.Record(gear, rpm, time += 16, Frame(rpm));
+                }
+            }
+
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+            var p = result.Profile;
+            var row = p.LedRpm["2"];
+
+            for (int i = 0; i < thresholds.Length; i++)
+                Check(Math.Abs(row[i + 1] - thresholds[i]) <= 40,
+                      "LED " + (i + 1) + " is its own threshold, not the limiter: " + row[i + 1] + ", expected about " + thresholds[i]);
+            Check(p.RedlineBlinkInterval >= 84 && p.RedlineBlinkInterval <= 130,
+                  "the blink was timed at about 100 ms, got " + p.RedlineBlinkInterval);
+            Check(Math.Abs(row[0] - redline) <= 60, "the redline is where the blinking starts, about " + redline + ", got " + row[0]);
+            Equal("#00000000", p.LedColor[0], "a strip that blinks in its own colours gets a transparent redline colour");
+            Check(result.Report.Any(l => l.Contains("blinks at the limiter")), "the report says the strip blinks");
         }
 
         // ---------- into a car file ----------

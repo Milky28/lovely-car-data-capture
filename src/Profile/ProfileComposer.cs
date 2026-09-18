@@ -194,12 +194,15 @@ namespace LovelyCarDataCapture.Profile
             foreach (var g in sr.ColorGroups)
                 details.Add("  LED " + string.Join(", ", g.Slots.Select(i => (i + 1).ToString(CultureInfo.InvariantCulture))) +
                             ": " + g.Measured + " -> " + g.Name + " " + g.Hex);
-            if (sr.RedlineRpm.HasValue)
+            if (sr.RedlineRpm.HasValue && !sr.RedlineFromBlink)
                 details.Add("  Redline color " + sr.RedlineMeasured + " -> " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
                             (sr.RedlineHighestBelow.HasValue && sr.RedlineLowestAbove.HasValue
                                 ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
             if (sr.SecondStageRpm.HasValue)
                 details.Add("  Second stage " + sr.SecondStageMeasured + " -> " + (sr.SecondStageColor ?? "?") + " from " + sr.SecondStageRpm + " rpm (not in the file)");
+            if (sr.BlinkSeen)
+                details.Add("  Blinks from " + sr.BlinkFromRpm + " rpm, dark for about " + sr.BlinkIntervalMs + " ms at a time" +
+                            (sr.RedlineFromBlink ? ", keeping the strip's own colours" : ""));
             notes.AddRange(sr.Notes);
 
             if (!mappable)
@@ -283,6 +286,9 @@ namespace LovelyCarDataCapture.Profile
                 else if (Math.Abs(p.RedlineBlinkInterval - sr.BlinkIntervalMs.Value) > 25)
                     notes.Add("The blink measured about " + sr.BlinkIntervalMs + " ms but the repo file says " +
                               p.RedlineBlinkInterval + "; it was left alone.");
+                else
+                    notes.Add("The blink measured about " + sr.BlinkIntervalMs + " ms, matching the repo file's " +
+                              p.RedlineBlinkInterval + ".");
             }
             else if (sr.RedlineRpm.HasValue && baseline != null && p.RedlineBlinkInterval > 0)
                 notes.Add("The repo file blinks at the redline (redlineBlinkInterval " + p.RedlineBlinkInterval +
@@ -379,7 +385,7 @@ namespace LovelyCarDataCapture.Profile
         {
             var layout = sr.Layout;
             var suggested = new string[layout.LedNumber + 1];
-            suggested[0] = sr.RedlineColor ?? Red;
+            suggested[0] = sr.RedlineFromBlink ? "#00000000" : sr.RedlineColor ?? Red;
             for (int i = 0; i < layout.LedNumber; i++)
             {
                 var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
@@ -418,6 +424,13 @@ namespace LovelyCarDataCapture.Profile
                 if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
                 if (!SameRgb(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
             }
+            // A strip that blinks in its own colours: ATSR paints every light in the redline colour above
+            // the redline unless that colour is transparent, which keeps the strip's own.
+            if (sr.RedlineFromBlink && p.LedColor.Count > 0 && !LedLayout.IsGapColor(p.LedColor[0]))
+                notes.Add("In the game the strip keeps its own colours while it blinks. ATSR shows every light in the redline " +
+                          "color, " + p.LedColor[0] + ", above the redline; a transparent redline color (#00000000) would keep " +
+                          "the strip's own colours blinking instead, as the game does.");
+
             // The redline colour is ledColor[0], and it was never compared: two AMS2 cars turned out to
             // flash cyan where their files say blue, and nothing said so.
             if (!string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameRgb(p.LedColor[0], sr.RedlineColor))

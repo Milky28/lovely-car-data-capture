@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using LovelyCarDataCapture.Capture;
 
@@ -32,6 +34,10 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Length of one dark phase above the redline, in milliseconds; null when the lights don't blink.</summary>
         public int? BlinkIntervalMs;
         public bool BlinkSeen;
+        /// <summary>RPM where the strip starts blinking, whether or not it also changes colour.</summary>
+        public int? BlinkFromRpm;
+        /// <summary>The redline was found from where the blinking starts, the strip keeping its own colours.</summary>
+        public bool RedlineFromBlink;
         public int Samples;
         public List<string> Notes = new List<string>();
     }
@@ -81,6 +87,24 @@ namespace LovelyCarDataCapture.Screen
             });
         }
 
+        /// <summary>
+        /// Writes every frame as it was recorded: time, gear, RPM and each lit light's position and
+        /// colour. The same layout as the recordings in tests/data, so a capture from a real session
+        /// can be replayed through changed code instead of being driven again.
+        /// </summary>
+        public void WriteFrames(TextWriter writer)
+        {
+            writer.WriteLine("frame,timeMs,gear,rpm,blobs");
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                var blobs = string.Join(" ", s.X.Select((x, b) => ((int)Math.Round(x)).ToString(CultureInfo.InvariantCulture) + ":" +
+                                                                  s.Colors[b].R + ":" + s.Colors[b].G + ":" + s.Colors[b].B));
+                writer.WriteLine(string.Join(",", i.ToString(CultureInfo.InvariantCulture), s.TimeMs.ToString(CultureInfo.InvariantCulture),
+                                             s.Gear, s.Rpm.ToString(CultureInfo.InvariantCulture), blobs));
+            }
+        }
+
         public ScreenLedResult Result()
         {
             var result = new ScreenLedResult { Samples = _samples.Count };
@@ -122,14 +146,30 @@ namespace LovelyCarDataCapture.Screen
                 }
             }
 
+            // Blinks first: a blink's dark phase looks exactly like every light switching off, and its
+            // next lit phase like every light switching on, so left in they swamp the real thresholds -
+            // holding the limiter, as a capture should, gives dozens of them.
+            var blink = FindBlinks(lit, layout, result);
+
             FindRedline(lit, hues, result);
+            if (!result.RedlineRpm.HasValue && result.BlinkFromRpm.HasValue)
+            {
+                // The strip blinks without changing colour: where the blinking starts is the redline.
+                result.RedlineRpm = result.BlinkFromRpm;
+                result.RedlineHighestBelow = result.BlinkFromRpm;
+                result.RedlineLowestAbove = result.BlinkFromRpm;
+                result.RedlineFromBlink = true;
+                result.Notes.Add("The strip blinks from about " + result.BlinkFromRpm + " rpm and keeps its own colours while it does, " +
+                                 "so the redline was taken from where the blinking starts.");
+            }
             MeasureColors(lit, result);
 
             var window = new LedWindowCapture(layout.LedNumber);
-            for (int i = 0; i < _samples.Count; i++) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
+            for (int i = 0; i < _samples.Count; i++)
+                if (!blink[i]) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
 
-            MeasureBlink(lit, result);
+            ReportSolidRedline(lit, result);
 
             int neverLit = Enumerable.Range(0, layout.LedNumber).Count(s => !layout.IsGap[s] && !lit.Any(f => f[s]));
             if (neverLit > 0) result.Notes.Add(neverLit + " light(s) were never seen lit; rev higher to reach them.");
@@ -201,8 +241,11 @@ namespace LovelyCarDataCapture.Screen
             }
             if (risingAt.Count == 0 && fallingAt.Count == 0)
             {
-                result.Notes.Add("The strip never changed colour, so no redline colour change was seen. " +
-                                 "Either this car doesn't have one, or the limiter was never reached.");
+                // A strip that blinks has shown where its redline is anyway; saying the limiter was never
+                // reached would contradict the next note.
+                if (!result.BlinkSeen)
+                    result.Notes.Add("The strip never changed colour, so no redline colour change was seen. " +
+                                     "Either this car doesn't have one, or the limiter was never reached.");
                 return;
             }
 
@@ -327,34 +370,73 @@ namespace LovelyCarDataCapture.Screen
                 result.Notes.Add("Some colours are too close to tell apart on screen; check them against the game.");
         }
 
-        /// <summary>Above the redline, a blinking strip goes fully dark in some frames. Its dark phase is the interval.</summary>
-        private void MeasureBlink(bool[][] lit, ScreenLedResult result)
+        /// <summary>Longest dark gap that still counts as one blink rather than the lights genuinely going off.</summary>
+        private const int MaxBlinkMs = 700;
+
+        /// <summary>
+        /// Finds the frames where the strip is dark because it's blinking. The signature doesn't depend
+        /// on knowing the redline: a short run of fully dark frames with the whole strip lit on both
+        /// sides of it. The lights never all go off between one frame and the next for any other reason.
+        /// </summary>
+        private bool[] FindBlinks(bool[][] lit, StripLayout layout, ScreenLedResult result)
         {
-            if (!result.RedlineRpm.HasValue) return;
-            var dark = new List<int>();
-            long darkFrom = -1;
-            long lastTime = -1;
-            int above = 0;
-            for (int i = 0; i < _samples.Count; i++)
+            int n = _samples.Count;
+            var blink = new bool[n];
+            int lights = layout.LedNumber - layout.GapCount;
+            if (lights < 2) return blink;
+            var count = lit.Select(f => f.Count(v => v)).ToArray();
+            // One light missed in a frame shouldn't hide a full strip.
+            bool Full(int i) => count[i] >= lights - 1;
+
+            var darkLengths = new List<double>();
+            var onsets = new List<double>();
+            long lastBlink = long.MinValue;
+            int k = 0;
+            while (k < n)
             {
-                if (_samples[i].Rpm <= result.RedlineRpm.Value) { darkFrom = -1; continue; }
-                above++;
-                bool anyLit = lit[i].Any(v => v);
-                if (!anyLit && darkFrom < 0) darkFrom = _samples[i].TimeMs;
-                if (anyLit && darkFrom >= 0)
-                {
-                    dark.Add((int)(_samples[i].TimeMs - darkFrom));
-                    darkFrom = -1;
-                }
-                lastTime = _samples[i].TimeMs;
+                if (count[k] != 0) { k++; continue; }
+                int start = k;
+                while (k < n && count[k] == 0 && _samples[k].Gear == _samples[start].Gear) k++;
+                int before = start - 1, after = k;
+                if (before < 0 || after >= n) continue;
+                if (_samples[before].Gear != _samples[start].Gear || _samples[after].Gear != _samples[start].Gear) continue;
+                long length = _samples[after].TimeMs - _samples[start].TimeMs;
+                if (!Full(before) || !Full(after) || length > MaxBlinkMs) continue;
+
+                for (int f = start; f < after; f++) blink[f] = true;
+                darkLengths.Add(length);
+
+                // The first blink of each visit to the limiter says where blinking starts. Later ones
+                // only say where the limiter holds the revs, which is higher.
+                if (lastBlink == long.MinValue || _samples[start].TimeMs - lastBlink > 1000)
+                    onsets.Add((_samples[before].Rpm + _samples[start].Rpm) / 2.0);
+                lastBlink = _samples[after].TimeMs;
             }
-            result.BlinkSeen = dark.Count > 1;
-            if (result.BlinkSeen)
-                result.BlinkIntervalMs = (int)Math.Round(Median(dark.Select(d => (double)d).ToList()));
-            else if (above > 30)
+
+            result.BlinkSeen = darkLengths.Count >= 2;
+            if (!result.BlinkSeen) return blink;
+
+            result.BlinkIntervalMs = (int)Math.Round(Median(darkLengths));
+            // A blink cycle isn't timed to the revs, so the first dark frame of a visit can come up to one
+            // lit phase after the threshold was crossed. The earliest visits are the closest; the lowest
+            // quarter rather than the very lowest, so one odd frame can't decide it.
+            onsets.Sort();
+            result.BlinkFromRpm = RoundTo(onsets[onsets.Count / 4], 5);
+            result.Notes.Add("The strip blinks at the limiter: dark for about " + result.BlinkIntervalMs + " ms at a time, " +
+                             darkLengths.Count + " blinks seen. Those frames were kept out of the light thresholds.");
+            return blink;
+        }
+
+        /// <summary>A strip that stays lit above the redline says so, so a file claiming it blinks can be checked.</summary>
+        private void ReportSolidRedline(bool[][] lit, ScreenLedResult result)
+        {
+            if (result.BlinkSeen || !result.RedlineRpm.HasValue) return;
+            int above = _samples.Count(s => s.Rpm > result.RedlineRpm.Value);
+            if (above > 30)
                 result.Notes.Add("The lights stayed on above the redline in all " + above +
                                  " frames there, so the strip doesn't blink (redlineBlinkInterval 0).");
-            if (lastTime < 0) result.Notes.Add("The redline was never held long enough to check for blinking.");
+            else
+                result.Notes.Add("The redline was never held long enough to check for blinking.");
         }
 
         private static double Median(List<double> values)

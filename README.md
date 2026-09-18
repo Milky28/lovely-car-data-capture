@@ -117,7 +117,11 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   agree are taken as evidence it does, and the gears a track gives no room to sweep follow them.
 - **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
   washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
-- **Where the strip turns to its redline colour**, and whether it blinks there. A car that changes
+- **Where the strip turns to its redline colour, and whether it blinks there.** A blink is recognised
+  by its shape - a short fully dark gap with the whole strip lit on both sides - and timed from it.
+  Those frames are kept out of the light thresholds, where every blink would otherwise look like all
+  the lights switching on at once. A strip that blinks without changing colour gets its redline from
+  where the blinking starts. A car that changes
   colour a second time near the limiter gets that reported too: a car file holds one redline, so only
   the first is written, and ATSR adds a second stage itself for some cars.
 
@@ -200,6 +204,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `ScreenCaptureFps` | `30` | Frames read per second, 30 or 60. Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames to time, or one that revs very quickly; it roughly doubles the CPU a capture uses. Also on the plugin's page. |
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
+| `SaveCaptureFrames` | `true` | Write `<car>.frames.csv` next to each screen-capture export: every frame's RPM and the lights seen. Replay it with `LovelyCarDataCapture.Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json` to check a capture again without driving it. |
 | `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |
 | `LedNumber` | `12` | LED count for new cars in games without LED data. |

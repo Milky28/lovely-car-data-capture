@@ -59,6 +59,12 @@ namespace LovelyCarDataCapture
         /// </summary>
         public bool CopyMeasuredToOtherGears { get; set; }
 
+        /// <summary>
+        /// Write the raw frames of a screen capture next to its export, so it can be checked again later
+        /// - by new code, or when a value looks odd - without driving it again.
+        /// </summary>
+        public bool SaveCaptureFrames { get; set; } = true;
+
         /// <summary>Show a panel over the game saying what the plugin is doing. Mapped buttons say nothing otherwise.</summary>
         public bool ShowOverlay { get; set; } = true;
         /// <summary>Where that panel sits, in screen pixels; drag it to move it. 0,0 places it top left of the main screen.</summary>
