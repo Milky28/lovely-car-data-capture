@@ -10,13 +10,6 @@ reads them from telemetry.
 
 *A community tool, not made by or affiliated with Lovely Sim Racing or ATSR.*
 
-<p align="center">
-  <img src="docs/images/wheel-matches-game.jpg" width="480"
-       alt="ACC's Ginetta G55 GT4 dash lights on screen, and a Conspit wheel below showing the same lights from the captured file">
-  <br><em>ACC's Ginetta G55 GT4, a car new to the repo: the game's lights on screen, and the wheel below
-  driven by ATSR from the file this plugin wrote.</em>
-</p>
-
 ## Install
 
 1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases/latest).
@@ -79,6 +72,13 @@ If you use ATSR, you can see the new file on your wheel straight after the drive
 
 Each export then goes to your wheel as soon as it's saved. While a copy is there ATSR uses it instead
 of the repo's file, so remove it from the plugin's page (*Checking a file on the wheel*) once you're done.
+
+<p align="center">
+  <img src="docs/images/wheel-matches-game.jpg" width="480"
+       alt="ACC's Ginetta G55 GT4 dash lights on screen, and a Conspit wheel below showing the same lights from the captured file">
+  <br><em>ACC's Ginetta G55 GT4, a car new to the repo: the game's lights on screen, and the wheel below
+  driven by ATSR from the file this plugin wrote.</em>
+</p>
 
 ## Submit it
 
