@@ -474,6 +474,33 @@ namespace LovelyCarDataCapture.Profile
             if (mismatched.Count > 0)
                 notes.Add("Gaps differ from the repo file: " + string.Join("; ", mismatched) + ".");
 
+            // Lights the screen shows in the very same colour can't be two colours in the file. PMR's
+            // Viper has its outer pair identical on screen, while its file makes one green and the other
+            // sky blue. Which of the file's colours is meant is settled by the screen: the one nearest.
+            foreach (var group in sr.ColorGroups)
+            {
+                var slots = group.Slots.Where(i => i + 1 < p.LedColor.Count && !layout.IsGap[i] &&
+                                                   !(sr.ColorUnknown != null && sr.ColorUnknown[i]) &&
+                                                   !LedLayout.IsGapColor(p.LedColor[i + 1])).ToList();
+                var inFile = slots.Select(i => p.LedColor[i + 1]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (inFile.Count < 2 || inFile.All(c => SameColour(c, inFile[0]))) continue;
+                // Neighbouring colours are what a game washes together - the AMS2 M8's deep orange and red
+                // look alike on screen - so the screen can't settle those. Only colours far apart, like
+                // the Viper's green and sky blue, can't be one light seen two ways.
+                var hues = inFile.Select(c => TryRgb(c, out var rgb) ? rgb.Hue : -1).ToList();
+                if (hues.Any(h => h < 0)) continue;
+                bool farApart = hues.Any(h1 => hues.Any(h2 => HueGap(h1, h2) > DistinctColourDegrees));
+                if (!farApart) continue;
+                string nearest = inFile.OrderBy(c => TryRgb(c, out var rgb) && rgb.Hue >= 0 && group.Measured.Hue >= 0
+                                                         ? HueGap(rgb.Hue, group.Measured.Hue) : 999).First();
+                var changed = slots.Where(i => !string.Equals(p.LedColor[i + 1], nearest, StringComparison.OrdinalIgnoreCase)).ToList();
+                foreach (int i in changed) p.LedColor[i + 1] = nearest;
+                notes.Add("LED " + string.Join(", ", slots.Select(i => i + 1)) + " show the same colour on screen (" + group.Measured +
+                          "), but the repo file had them as " + string.Join(" and ", inFile) + ". LED " +
+                          string.Join(", ", changed.Select(i => i + 1)) + " now use " + nearest +
+                          ", the file's own colour nearest what the screen shows. Check it in the game.");
+            }
+
             var different = new List<string>();
             for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
             {
@@ -511,6 +538,15 @@ namespace LovelyCarDataCapture.Profile
             if (x.Hue < 0 || y.Hue < 0) return x.Hue < 0 && y.Hue < 0;          // both grey or white
             double d = Math.Abs(x.Hue - y.Hue) % 360;
             return (d > 180 ? 360 - d : d) <= 12;
+        }
+
+        /// <summary>File colours further apart than this aren't one colour a game has washed out.</summary>
+        private const double DistinctColourDegrees = 45;
+
+        private static double HueGap(double a, double b)
+        {
+            double d = Math.Abs(a - b) % 360;
+            return d > 180 ? 360 - d : d;
         }
 
         private static bool TryRgb(string hex, out LedColor colour)

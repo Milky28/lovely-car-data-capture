@@ -148,7 +148,38 @@ namespace LovelyCarDataCapture.Tests
             var file = new[] { 5287, 5676, 6080, 6492, 6492, 6080, 5676, 5287 };
             for (int i = 0; i < 8; i++)
                 Check(n.Leds[i] != null && Math.Abs(n.Leds[i].Rpm - file[i]) <= 30, "LED " + (i + 1) + " is about " + file[i] + ", got " + n.Leds[i]?.Rpm);
+
+            // The file makes the outer pair green and sky blue; on screen they're one colour, a blue.
+            var lookup = new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = "projectmotorracing/srt-viper-gts-r.json", Text = PmrViperJson() };
+            var composed = ProfileComposer.Compose(session, new CaptureSettings(), lookup, new DateTime(2026, 9, 18));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
+            Equal("#FF87CEEB", composed.Profile.LedColor[1], "LED 1 takes the file's sky blue, like LED 8");
+            Equal("#FF87CEEB", composed.Profile.LedColor[8], "LED 8 keeps its sky blue");
+            Equal("#FF00FF00", composed.Profile.LedColor[2], "LED 2 stays green");
         }
+
+        private static string PmrViperJson() => @"{
+  ""carName"": ""SRT Viper GTS-R"",
+  ""carId"": ""SRT Viper GTS-R"",
+  ""carClass"": ""GTE"",
+  ""ledNumber"": 8,
+  ""redlineBlinkInterval"": 0,
+  ""ledColor"": [""#00000000"",""#FF00FF00"",""#FF00FF00"",""#FFFFFF00"",""#FFFF0000"",""#FFFF0000"",""#FFFFFF00"",""#FF00FF00"",""#FF87CEEB""],
+  ""ledRpm"": [
+    {
+      ""R"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""N"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""1"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""2"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""3"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""4"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""5"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""6"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""7"": [6600,5287,5676,6080,6492,6492,6080,5676,5287],
+      ""8"": [6600,5287,5676,6080,6492,6492,6080,5676,5287]
+    }
+  ]
+}";
 
         private static void ScreenDetectorOnFrames()
         {
