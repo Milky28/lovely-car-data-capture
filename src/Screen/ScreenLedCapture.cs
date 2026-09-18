@@ -164,10 +164,19 @@ namespace LovelyCarDataCapture.Screen
             }
             MeasureColors(lit, result);
 
+            // Nothing above the redline is a light switching on: the file's format puts every light at
+            // or below it. Above it a strip is changing colour, blinking or both, and a game that fades
+            // its lights (ACC) leaves frames half way through the change - two lights, then seven, then
+            // ten - which would read as lights going dark and coming back on at the redline. A little
+            // margin keeps the last pair on cars where it lights at the redline itself.
+            double ceiling = result.RedlineRpm.HasValue
+                ? (result.RedlineLowestAbove ?? result.RedlineRpm.Value) + RedlineMarginRpm
+                : double.MaxValue;
             var window = new LedWindowCapture(layout.LedNumber);
             for (int i = 0; i < _samples.Count; i++)
-                if (!blink[i]) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
+                if (!blink[i] && _samples[i].Rpm <= ceiling) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
+            AverageWithSwitchOff(lit, blink, ceiling, result);
 
             ReportSolidRedline(lit, result);
 
@@ -401,6 +410,12 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Longest dark gap that still counts as one blink rather than the lights genuinely going off.</summary>
         private const int MaxBlinkMs = 700;
 
+        /// <summary>How far above the redline a frame can still count towards a light's threshold.</summary>
+        private const int RedlineMarginRpm = 50;
+
+        /// <summary>Frames a game's fade can spend between a dark strip and a full one.</summary>
+        private const int FadeFrames = 2;
+
         /// <summary>
         /// Finds the frames where the strip is dark because it's blinking. The signature doesn't depend
         /// on knowing the redline: a short run of fully dark frames with the whole strip lit on both
@@ -425,13 +440,21 @@ namespace LovelyCarDataCapture.Screen
                 if (count[k] != 0) { k++; continue; }
                 int start = k;
                 while (k < n && count[k] == 0 && _samples[k].Gear == _samples[start].Gear) k++;
-                int before = start - 1, after = k;
-                if (before < 0 || after >= n) continue;
-                if (_samples[before].Gear != _samples[start].Gear || _samples[after].Gear != _samples[start].Gear) continue;
-                long length = _samples[after].TimeMs - _samples[start].TimeMs;
-                if (!Full(before) || !Full(after) || length > MaxBlinkMs) continue;
+                int end = k;                        // first frame with anything lit
+                if (start == 0 || end >= n) continue;
 
-                for (int f = start; f < after; f++) blink[f] = true;
+                // A full strip on each side, allowing a frame or two of fade in between: a game that
+                // fades its lights catches some of them part way on.
+                int before = -1, after = -1;
+                for (int j = start - 1; j >= 0 && j >= start - 1 - FadeFrames && _samples[j].Gear == _samples[start].Gear; j--)
+                    if (Full(j)) { before = j; break; }
+                for (int j = end; j < n && j <= end + FadeFrames && _samples[j].Gear == _samples[start].Gear; j++)
+                    if (Full(j)) { after = j; break; }
+                long length = _samples[end].TimeMs - _samples[start].TimeMs;
+                if (before < 0 || after < 0 || length > MaxBlinkMs) continue;
+
+                // The fade frames go with the blink: they're no more a light switching than the dark is.
+                for (int f = before + 1; f < after; f++) blink[f] = true;
                 darkLengths.Add(length);
 
                 // The first blink of each visit to the limiter says where blinking starts. Later ones
@@ -453,6 +476,73 @@ namespace LovelyCarDataCapture.Screen
             result.Notes.Add("The strip blinks at the limiter: dark for about " + result.BlinkIntervalMs + " ms at a time, " +
                              darkLengths.Count + " blinks seen. Those frames were kept out of the light thresholds.");
             return blink;
+        }
+
+        /// <summary>Fewest switch-off readings a light needs before they're trusted to move its value.</summary>
+        private const int MinFalls = 3;
+
+        /// <summary>Widest gap between switching on and off that's still display lag, not two different things.</summary>
+        private const int MaxLagRpm = 200;
+
+        /// <summary>
+        /// Moves each light to the middle of where it switched on and where it switched off.
+        /// </summary>
+        /// <remarks>
+        /// A light is only seen lit once it's bright enough on screen. A game that switches its lights
+        /// instantly (AMS2) is seen on the frame it happens, and switching on and off agree to within a
+        /// few rpm. One that fades them in (ACC) is seen a frame or so late on the way up and a frame
+        /// or so early on the way down, so every light reads high rising and low falling, by the same
+        /// amount. The middle of the two is where it really switches, and for an instant game it's no
+        /// different from the rising value alone.
+        /// </remarks>
+        private void AverageWithSwitchOff(bool[][] lit, bool[] blink, double ceiling, ScreenLedResult result)
+        {
+            var falls = new Dictionary<string, List<double>[]>();
+            for (int i = 1; i < _samples.Count; i++)
+            {
+                var a = _samples[i - 1];
+                var b = _samples[i];
+                if (a.Gear != b.Gear || blink[i] || blink[i - 1] || a.Rpm > ceiling || b.Rpm > ceiling || b.Rpm >= a.Rpm) continue;
+                if (!falls.TryGetValue(b.Gear, out var perSlot))
+                {
+                    perSlot = Enumerable.Range(0, result.Layout.LedNumber).Select(_ => new List<double>()).ToArray();
+                    falls[b.Gear] = perSlot;
+                }
+                for (int s = 0; s < result.Layout.LedNumber; s++)
+                    if (lit[i - 1][s] && !lit[i][s]) perSlot[s].Add((a.Rpm + b.Rpm) / 2.0);
+            }
+
+            var gaps = new List<int>();
+            foreach (var gear in result.Gears)
+            {
+                if (!falls.TryGetValue(gear.Gear, out var perSlot)) continue;
+                for (int s = 0; s < gear.Leds.Length; s++)
+                {
+                    var rise = gear.Leds[s];
+                    if (rise == null || perSlot[s].Count < MinFalls) continue;
+                    double fall = Median(perSlot[s]);
+                    double lag = rise.Rpm - fall;
+                    if (lag < 0 || lag > MaxLagRpm) continue;      // a stray reading, not the same edge seen twice
+                    gear.Leds[s] = rise.WithFall(RoundTo((rise.Rpm + fall) / 2, 5), (int)Math.Round(fall));
+                    gaps.Add((int)Math.Round(lag));
+                }
+            }
+            if (gaps.Count < MinFalls || gaps.Average() <= 20) return;
+
+            // The fade is the game's, not one light's: the same delay applies to lights that never had
+            // enough switch-offs of their own, and leaving them late would mix late and corrected values
+            // when the gears are pooled.
+            int half = (int)Math.Round(Median(gaps.Select(g => (double)g).ToList()) / 2);
+            foreach (var gear in result.Gears)
+                for (int s = 0; s < gear.Leds.Length; s++)
+                {
+                    var led = gear.Leds[s];
+                    if (led == null || led.FallRpm.HasValue) continue;
+                    gear.Leds[s] = led.WithLagTaken(RoundTo(led.Rpm - half, 5), half);
+                }
+            result.Notes.Add("The lights switched on about " + half + " rpm later and off about as much earlier than they " +
+                             "really do - the game fades them, so each is seen a frame or so late. Where a light was seen " +
+                             "doing both, the two were averaged; the rest had the same " + half + " rpm taken off.");
         }
 
         /// <summary>A strip that stays lit above the redline says so, so a file claiming it blinks can be checked.</summary>

@@ -127,8 +127,28 @@ namespace LovelyCarDataCapture.Screen
                 g.Slots.Sort();
             }
 
-            Name(groups.OrderBy(g => g.Hue).ToList());
-            return groups.OrderBy(g => g.Hue).ToList();
+            var ordered = InStripOrder(groups);
+            Name(ordered);
+            return ordered;
+        }
+
+        /// <summary>
+        /// The groups in the order the ladder runs, red first. Hue is a circle and red sits across its
+        /// join: ACC's red measures 358°, which sorted plainly comes after green and gets named purple.
+        /// So the circle is cut at its widest empty stretch - the side of it the strip doesn't use.
+        /// </summary>
+        private static List<ColorGroup> InStripOrder(List<ColorGroup> groups)
+        {
+            var sorted = groups.OrderBy(g => g.Hue).ToList();
+            if (sorted.Count < 2) return sorted;
+            int cutAfter = sorted.Count - 1;                 // default: the join itself, no rotation
+            double widest = sorted[0].Hue + 360 - sorted[sorted.Count - 1].Hue;
+            for (int i = 0; i < sorted.Count - 1; i++)
+            {
+                double gap = sorted[i + 1].Hue - sorted[i].Hue;
+                if (gap > widest) { widest = gap; cutAfter = i; }
+            }
+            return sorted.Skip(cutAfter + 1).Concat(sorted.Take(cutAfter + 1)).ToList();
         }
 
         /// <summary>
@@ -154,7 +174,7 @@ namespace LovelyCarDataCapture.Screen
                 best[i, m] = double.MaxValue / 4;
                 for (int j = m - 1; j >= 0; j--)
                 {
-                    double take = Distance(groups[i].Hue, Ladder[j].Hue) + best[i + 1, j + 1];
+                    double take = Distance(groups[i].Hue, Ladder[j].Hue) + best[i + 1, j + 1];   // Distance goes the short way round
                     double skip = best[i, j + 1];
                     if (take <= skip) { best[i, j] = take; pick[i, j] = j; }
                     else { best[i, j] = skip; pick[i, j] = pick[i, j + 1]; }

@@ -518,6 +518,64 @@ namespace LovelyCarDataCapture.Tests
             Check(!result.Notes.Any(n => n.Contains("keeps its own colours")), "no claim that the lights keep their own colours");
         }
 
+        /// <summary>
+        /// A real capture from ACC, the second game: the McLaren 720S GT3 EVO. ACC fades its lights rather
+        /// than switching them, which leaves frames part way through every change - two lights, then
+        /// seven, then ten - and reads every light a frame or so late. It turns the strip blue at the
+        /// redline and blinks it, and its red measures 358 degrees, across the join in the hue circle.
+        /// Each of those once broke the capture: every light came out at the limiter, the blinks went
+        /// uncounted, and the red was named purple.
+        /// </summary>
+        private static void ScreenRealAccFades()
+        {
+            var session = new CaptureSession("AssettoCorsaCompetizione", "mclaren_720s_gt3_evo");
+            foreach (var f in LoadFrames(DataPath("acc-mclaren-720s-gt3-evo.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+
+            Equal(12, screen.Layout.LedNumber, "slots on the strip");
+            Check(screen.Layout.IsGap[2] && screen.Layout.IsGap[9], "gaps at LED 3 and 10");
+            Check(screen.BlinkSeen && screen.Notes.Any(n => n.Contains("blinks at the limiter")), "the blinks were recognised through the fade");
+            Equal("#FF0000FF", screen.RedlineColor, "the strip turns blue at the redline");
+            string ColourOf(int led) => screen.ColorGroups.First(g => g.Slots.Contains(led - 1)).Hex;
+            Equal("#FFFF0000", ColourOf(11), "a red at 358 degrees is red, not purple");
+            Equal("#FF00FF00", ColourOf(1), "LED 1 is green");
+
+            // What lands in the file, against the repo's values - evenly 200 rpm apart, which this bears out.
+            var lookup = new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = "assettocorsacompetizione/mclaren-720s-gt3-evo.json", Text = AccMcLarenJson() };
+            var composed = ProfileComposer.Compose(session, new CaptureSettings(), lookup, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
+            var row = composed.Profile.LedRpm["3"];
+            var file = new[] { 5300, 5500, 0, 5700, 5900, 6100, 6300, 6500, 6700, 0, 6900, 7100 };
+            var offsets = new List<int>();
+            for (int i = 0; i < 12; i++)
+            {
+                if (file[i] == 0) { Equal(0, row[i + 1], "LED " + (i + 1) + " stays a gap"); continue; }
+                offsets.Add(row[i + 1] - file[i]);
+                Check(Math.Abs(row[i + 1] - file[i]) <= 50, "LED " + (i + 1) + " is about " + file[i] + ", not the limiter: " + row[i + 1]);
+            }
+            Check(Math.Abs(offsets.Average()) <= 20, "no fade lag left over: the values sit " +
+                  offsets.Average().ToString("0", CultureInfo.InvariantCulture) + " rpm from the file on average");
+            Check(composed.Report.Any(l => l.Contains("the game fades them")), "the report says why the values were corrected");
+        }
+
+        private static string AccMcLarenJson() => @"{
+  ""carName"": ""McLaren 720S GT3 EVO"",
+  ""carId"": ""mclaren_720s_gt3_evo"",
+  ""carClass"": ""GT3"",
+  ""ledNumber"": 12,
+  ""redlineBlinkInterval"": 250,
+  ""ledColor"": [""#FF0000FF"",""#FF00FF00"",""#FF00FF00"",""#00000000"",""#FF00FF00"",""#FF00FF00"",""#FFFFFF00"",""#FFFFFF00"",""#FFFF8000"",""#FFFF8000"",""#00000000"",""#FFFF0000"",""#FFFF0000""],
+  ""ledRpm"": [
+    {
+      ""R"": [7200,5300,5500,0,5700,5900,6100,6300,6500,6700,0,6900,7100],
+      ""N"": [7200,5300,5500,0,5700,5900,6100,6300,6500,6700,0,6900,7100],
+      ""1"": [7200,5300,5500,0,5700,5900,6100,6300,6500,6700,0,6900,7100],
+      ""2"": [7200,5300,5500,0,5700,5900,6100,6300,6500,6700,0,6900,7100],
+      ""3"": [7200,5300,5500,0,5700,5900,6100,6300,6500,6700,0,6900,7100]
+    }
+  ]
+}";
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {

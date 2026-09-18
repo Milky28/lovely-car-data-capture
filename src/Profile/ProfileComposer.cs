@@ -655,6 +655,8 @@ namespace LovelyCarDataCapture.Profile
                 window = "dark to " + led.HighestOff + ", lit from " + led.LowestOn;
             else
                 window = "<= " + led.LowestOn + " (no dark sample below it)";
+            if (led?.FallRpm != null) window += "; off at " + led.FallRpm + ", the two averaged";
+            else if (led != null && led.LagTaken > 0) window += "; " + led.LagTaken + " rpm of display lag taken off";
             return string.Format(CultureInfo.InvariantCulture, "  LED {0,2}  {1,6}  {2}",
                 index + 1, led?.Rpm.ToString(CultureInfo.InvariantCulture) ?? "-", window);
         }

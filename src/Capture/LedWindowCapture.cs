@@ -192,6 +192,31 @@ namespace LovelyCarDataCapture.Capture
         public int Climbs { get; set; }
         /// <summary>How far apart those climbs put the value, in RPM.</summary>
         public int ClimbSpread { get; set; }
+        /// <summary>Where the light was seen switching off as the revs fell, when that was used; null otherwise.</summary>
+        public int? FallRpm { get; private set; }
+
+        /// <summary>
+        /// The same measurement, its value moved to the middle of switching on and switching off. The
+        /// rest is kept, so the checks on how tightly it was measured still apply.
+        /// </summary>
+        public LedThreshold WithFall(int rpm, int fallRpm) => new LedThreshold(rpm, HighestOff, LowestOn)
+        {
+            Inconsistent = Inconsistent,
+            Climbs = Climbs,
+            ClimbSpread = ClimbSpread,
+            FallRpm = fallRpm,
+        };
+
+        /// <summary>RPM taken off for display lag measured on the strip's other lights, when this one had no switch-off of its own.</summary>
+        public int LagTaken { get; private set; }
+
+        public LedThreshold WithLagTaken(int rpm, int taken) => new LedThreshold(rpm, HighestOff, LowestOn)
+        {
+            Inconsistent = Inconsistent,
+            Climbs = Climbs,
+            ClimbSpread = ClimbSpread,
+            LagTaken = taken,
+        };
     }
 
     internal sealed class GearLedResult
