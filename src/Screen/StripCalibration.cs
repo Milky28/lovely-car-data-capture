@@ -97,10 +97,30 @@ namespace LovelyCarDataCapture.Screen
             // Test button reads one - has nothing to sift, so take what's there.
             int heaviest = groups.Max(g => g.Count);
             double needed = _frames >= 30 ? Math.Max(3, heaviest * 0.02) : 1;
-            var lights = groups.Where(g => g.Count >= needed)
-                               .Select(g => g.Average())
-                               .OrderBy(x => x)
-                               .ToList();
+            var kept = groups.Where(g => g.Count >= needed).ToList();
+
+            // Two positions far closer together than the strip's spacing are one light seen two ways:
+            // PMR's Viper puts its outer lights 8 px apart depending on how far they've come on, with
+            // the lights 42 px apart. A fixed few pixels can't tell that from two lights.
+            if (kept.Count >= 3)
+            {
+                var between = new List<double>();
+                for (int i = 1; i < kept.Count; i++) between.Add(kept[i].Average() - kept[i - 1].Average());
+                double typical = Median(between.Where(d => d > 12).ToList());
+                if (typical > 0)
+                {
+                    var merged = new List<List<double>> { new List<double>(kept[0]) };
+                    for (int i = 1; i < kept.Count; i++)
+                    {
+                        if (kept[i].Average() - merged[merged.Count - 1].Average() < typical * 0.4) merged[merged.Count - 1].AddRange(kept[i]);
+                        else merged.Add(new List<double>(kept[i]));
+                    }
+                    kept = merged;
+                }
+            }
+            var lights = kept.Select(g => g.Average())
+                             .OrderBy(x => x)
+                             .ToList();
             if (lights.Count == 0)
             {
                 problem = "the lights were seen too rarely to place them";

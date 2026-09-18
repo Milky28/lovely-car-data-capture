@@ -72,6 +72,7 @@ namespace LovelyCarDataCapture.Tests
             Run("A real new ACC car comes out as a whole file", ScreenRealNewAccCar);
             Run("A real ACC capture sees past traction control and ABS lights", ScreenRealAccIndicators);
             Run("Screen detector finds white-hot lights by their glow (PMR)", ScreenDetectorWhiteCores);
+            Run("A real PMR capture reads through an 80 ms display lag", ScreenRealPmrLag);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);

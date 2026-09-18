@@ -786,7 +786,14 @@ namespace LovelyCarDataCapture.Screen
         }
 
         /// <summary>Longest display lag looked for, in milliseconds.</summary>
-        private const int MaxLagMs = 150;
+        private const int MaxLagMs = 250;
+
+        /// <summary>
+        /// Widest gap between a light's switch-on and switch-off that still counts as the same light
+        /// seen late. PMR shows its lights about 80 ms behind the revs, which in neutral, with the revs
+        /// falling fast, is 550 rpm.
+        /// </summary>
+        private const int MaxSwitchGapRpm = 1000;
 
         private readonly List<string> _lagNotes = new List<string>();
 
@@ -805,17 +812,18 @@ namespace LovelyCarDataCapture.Screen
         {
             _lagNotes.Clear();
             int best = 0, lights = 0;
-            double bestGap = double.MaxValue, noLagGap = 0;
-            for (int lag = 0; lag <= MaxLagMs; lag += 2)
+            double bestGap = 0, noLagGap = 0;
+            // A tight limit on how far on and off may disagree first, which keeps odd switches out. Only
+            // a game far behind its revs (PMR, about 80 ms) needs it wider, and then nothing passes it.
+            foreach (int limit in new[] { MaxLagRpm * 2, MaxSwitchGapRpm })
             {
-                var rpm = Shifted(lag);
-                var gaps = SwitchGaps(lit, blink, rpm);
-                if (gaps.Count < MinFalls) { if (lag == 0) return; continue; }   // too few lights seen both ways to tell
-                double gap = Math.Abs(Median(gaps));
-                if (lag == 0) noLagGap = Median(gaps);
-                if (gap < bestGap - 0.5) { bestGap = gap; best = lag; lights = gaps.Count; }
+                best = FindLag(lit, blink, limit, out lights, out bestGap, out noLagGap);
+                if (best > 0) break;
             }
             if (best == 0) return;
+            // How far off the raw readings were, for the report: every light, however far apart.
+            var unshifted = SwitchGaps(lit, blink, Shifted(0), int.MaxValue);
+            if (unshifted.Count > 0) noLagGap = Median(unshifted);
 
             var moved = Shifted(best);
             for (int i = 0; i < _samples.Count; i++)
@@ -829,6 +837,28 @@ namespace LovelyCarDataCapture.Screen
                           (int)Math.Round(noLagGap / 2) + " rpm high switching on and as much low switching off. Each frame " +
                           "was read against the revs " + best + " ms earlier, which brings the two within " +
                           (int)Math.Round(bestGap) + " rpm (" + lights + " lights seen both ways).");
+        }
+
+        /// <summary>Tries each delay in turn and returns the one where switching on and off agree best.</summary>
+        private int FindLag(bool[][] lit, bool[] blink, int limit, out int lights, out double bestGap, out double noLagGap)
+        {
+            int best = 0;
+            lights = 0;
+            bestGap = double.MaxValue;
+            noLagGap = double.NaN;
+            for (int lag = 0; lag <= MaxLagMs; lag += 2)
+            {
+                var gaps = SwitchGaps(lit, blink, Shifted(lag), limit);
+                if (gaps.Count < MinFalls) continue;   // too few lights seen both ways to tell at this delay
+                double signed = Median(gaps), gap = Math.Abs(signed);
+                if (double.IsNaN(noLagGap)) noLagGap = signed;
+                if (gap < bestGap - 0.5) { bestGap = gap; best = lag; lights = gaps.Count; }
+                // Past the delay where they agree, on and off only drift further apart the other way; a
+                // wide search mustn't find a chance agreement among a few lights much later.
+                else if (signed < 0) break;
+            }
+            if (double.IsNaN(noLagGap)) noLagGap = 0;
+            return best;
         }
 
         /// <summary>Each frame's RPM as it was <paramref name="lagMs"/> earlier, within the same gear.</summary>
@@ -854,7 +884,7 @@ namespace LovelyCarDataCapture.Screen
         /// For every light seen switching both ways in a gear, how much higher it switched on than off,
         /// against the given RPMs.
         /// </summary>
-        private List<double> SwitchGaps(bool[][] lit, bool[] blink, double[] rpm)
+        private List<double> SwitchGaps(bool[][] lit, bool[] blink, double[] rpm, int limit)
         {
             var rises = new Dictionary<string, List<double>>();
             var falls = new Dictionary<string, List<double>>();
@@ -879,7 +909,7 @@ namespace LovelyCarDataCapture.Screen
             {
                 if (!falls.TryGetValue(key, out var down) || down.Count < 2 || rises[key].Count < 2) continue;
                 double gap = Median(rises[key]) - Median(down);
-                if (Math.Abs(gap) <= MaxLagRpm * 2) gaps.Add(gap);    // further apart is two different things
+                if (Math.Abs(gap) <= limit) gaps.Add(gap);    // further apart is two different things
             }
             return gaps;
 

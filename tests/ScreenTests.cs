@@ -134,6 +134,22 @@ namespace LovelyCarDataCapture.Tests
             Equal("blue green yellow red red yellow green blue", string.Join(" ", full.Select(Name)), "colours from the outside in");
         }
 
+        private static void ScreenRealPmrLag()
+        {
+            // PMR's Viper, revved in neutral: its lights show about 80 ms behind the revs, four times the
+            // other games, and its outer pair turns up at two positions 8 px apart.
+            var session = new CaptureSession("ProjectMotorRacing", "SRT Viper GTS-R");
+            foreach (var f in LoadFrames(DataPath("pmr-srt-viper-gts-r.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Equal(8, screen.Layout.LedNumber, "eight lights, not ten");
+            Check(screen.DisplayLagMs >= 60 && screen.DisplayLagMs <= 100, "the lag is about 80 ms, got " + screen.DisplayLagMs);
+            var n = screen.Gears.First(g => g.Gear == "N");
+            // The repo's file: 5287, 5676, 6080, 6492 from the outside in.
+            var file = new[] { 5287, 5676, 6080, 6492, 6492, 6080, 5676, 5287 };
+            for (int i = 0; i < 8; i++)
+                Check(n.Leds[i] != null && Math.Abs(n.Leds[i].Rpm - file[i]) <= 30, "LED " + (i + 1) + " is about " + file[i] + ", got " + n.Leds[i]?.Rpm);
+        }
+
         private static void ScreenDetectorOnFrames()
         {
             var detector = new StripDetector();
