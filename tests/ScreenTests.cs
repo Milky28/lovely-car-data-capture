@@ -158,6 +158,26 @@ namespace LovelyCarDataCapture.Tests
             Equal("#FF00FF00", composed.Profile.LedColor[2], "LED 2 stays green");
         }
 
+        private static void ScreenRealPmrC8()
+        {
+            // PMR's C8.R in neutral: the pit limiter flashes the strip green at idle, and at the limiter
+            // it sweeps blue in 2, 4, 6, 8 lights with dark phases between.
+            var session = new CaptureSession("ProjectMotorRacing", "Corvette C8.R");
+            foreach (var f in LoadFrames(DataPath("pmr-corvette-c8-r-neutral.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Check(screen.Notes.Any(n => n.Contains("pit limiter")), "the idle flashing was set aside");
+            Equal(12, screen.Layout.LedNumber, "12 slots");
+            Check(screen.Layout.IsGap[2] && screen.Layout.IsGap[9], "gaps at LED 3 and 10");
+            Equal("#FF0000FF", screen.RedlineColor, "the strip turns blue at the redline");
+            Check(screen.BlinkSeen && screen.BlinkFromRpm > 7000, "it blinks at the limiter, not at idle: from " + screen.BlinkFromRpm);
+            var n = screen.Gears.First(g => g.Gear == "N");
+            var slots = new[] { 0, 1, 3, 4, 5, 6, 7, 8, 10, 11 };
+            Check(slots.All(i => n.Leds[i] != null && n.Leds[i].ClimbSpread <= 150), "every light pinned down within 150 rpm");
+            var values = slots.Select(i => n.Leds[i].Rpm).ToList();
+            Check(values.Zip(values.Skip(1), (a, b) => b >= a).All(x => x), "the lights come on left to right: " + string.Join(",", values));
+            Check(values[0] > 6000 && values.Last() < 7800, "between 6000 and the redline: " + string.Join(",", values));
+        }
+
         private static string PmrViperJson() => @"{
   ""carName"": ""SRT Viper GTS-R"",
   ""carId"": ""SRT Viper GTS-R"",

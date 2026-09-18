@@ -143,7 +143,9 @@ namespace LovelyCarDataCapture.Screen
 
             // The strip is worked out again once anything that isn't a light has been taken out.
             var calibration = _calibration;
-            if (DropFixtures(result))
+            // Reflections first: they're recognised by being lit at idle, which the next step clears.
+            bool fixtures = DropFixtures(result);
+            if (DropIdleAnimation(result) | fixtures)
             {
                 calibration = new StripCalibration();
                 foreach (var s in _samples)
@@ -206,6 +208,13 @@ namespace LovelyCarDataCapture.Screen
             // Just after a shift the screen still shows the old gear for as long as the game lags - about
             // 90 ms in PMR - while telemetry already has the new gear and its lower revs: every upshift
             // would read as the lights coming on far too low. Those frames count for nothing.
+            // Once the strip is in its redline state, what it does until it's back in its own colours is
+            // the redline's display, not lights switching on: PMR's C8.R sweeps its blue in 2, 4, 6, 8
+            // lights and back, and each step read as LED 1 lighting again. Arriving there still counts -
+            // on some cars the last lights come on exactly then.
+            if (_redline != null)
+                for (int i = 1; i < blink.Length && i < _redline.Length; i++)
+                    if (_redline[i] == true && _redline[i - 1] != false) blink[i] = true;
             long settle = result.DisplayLagMs + ShiftSettleMs;
             long gearStart = 0;
             for (int i = 0; i < blink.Length; i++)
@@ -342,6 +351,37 @@ namespace LovelyCarDataCapture.Screen
             result.Notes.Add("Some lights sometimes showed another colour while the rest of the strip didn't change (" +
                              string.Join("; ", named) + ") - indicators such as traction control or ABS, not the rev count. " +
                              "Those sightings were ignored (" + seen.Sum() + " in all).");
+        }
+
+        /// <summary>Below this share of the highest revs reached, a lit strip isn't counting revs.</summary>
+        private const double IdleShare = 0.5;
+
+        /// <summary>
+        /// Takes out lights lit far below where any rev light comes on. PMR's C8.R plays an animation
+        /// at idle - the whole strip flashing green in a pattern at 1500 rpm - which read as a blink
+        /// from 1510 rpm and lights switching on at idle. Rev lights are dark there, and no car's first
+        /// light is below half its revs, so anything lit under half the highest revs reached is dropped.
+        /// </summary>
+        private bool DropIdleAnimation(ScreenLedResult result)
+        {
+            int highest = _samples.Max(s => s.Rpm);
+            double floor = highest * IdleShare;
+            int frames = 0, lowest = int.MaxValue, top = 0;
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                if (s.Rpm >= floor || s.X.Length == 0) continue;
+                frames++;
+                lowest = Math.Min(lowest, s.Rpm);
+                top = Math.Max(top, s.Rpm);
+                s.X = new double[0];
+                s.Colors = new LedColor[0];
+                _samples[i] = s;
+            }
+            if (frames < 3) return false;
+            result.Notes.Add("The strip was lit at " + lowest + "-" + top + " rpm, well below where rev lights work (under half the " +
+                             highest + " rpm reached) - the pit limiter, or an idle or start-up animation. Those " + frames + " frames were ignored.");
+            return true;
         }
 
         /// <summary>Below this saturation a blob might be a reflection rather than a light.</summary>
