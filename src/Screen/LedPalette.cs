@@ -60,12 +60,33 @@ namespace LovelyCarDataCapture.Screen
             public List<int> Slots = new List<int>();
         }
 
+        /// <summary>
+        /// Colours a redline flash can be named as. It is named on its own rather than against the
+        /// strip, so nothing competes for a rung and the scale can be finer than the strip's: two AMS2
+        /// cars flash within ten degrees of each other and look plainly different, one cyan, one a
+        /// lighter blue.
+        /// </summary>
+        private static readonly Step[] FlashColors =
+        {
+            new Step("red", "#FFFF0000", 0),
+            new Step("orange", "#FFFF8000", 30),
+            new Step("yellow", "#FFFFFF00", 60),
+            new Step("green", "#FF00FF00", 120),
+            new Step("spring green", "#FF00FF80", 150),
+            new Step("cyan", "#FF00FFFF", 180),
+            new Step("light blue", "#FF00BFFF", 195),
+            new Step("dodger blue", "#FF1E90FF", 210),
+            new Step("blue", "#FF0000FF", 240),
+            new Step("violet", "#FF8000FF", 270),
+            new Step("purple", "#FFFF00FF", 300),
+        };
+
         /// <summary>Names one colour on its own, for the redline flash. Nothing constrains it, so it's the nearest.</summary>
         public static string Classify(LedColor color, out string name)
         {
             double hue = color.Hue;
             if (hue < 0) { name = "white"; return "#FFFFFFFF"; }
-            var best = Ladder.OrderBy(step => Distance(hue, step.Hue)).First();
+            var best = FlashColors.OrderBy(step => Distance(hue, step.Hue)).First();
             name = best.Name;
             return best.Hex;
         }

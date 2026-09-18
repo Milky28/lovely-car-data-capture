@@ -489,9 +489,14 @@ namespace LovelyCarDataCapture.Tests
             foreach (int led in new[] { 3, 4, 7, 8 }) Equal("#FFFFFF00", Of(led), "LED " + led + " is yellow");
             foreach (int led in new[] { 5, 6 }) Equal("#FFFF0000", Of(led), "LED " + led + " is red");
 
-            // A redline flash is named on its own: nothing says it has to be red.
+            // A redline flash is named on its own: nothing says it has to be red, and it gets a finer
+            // scale than the strip because nothing else competes for a colour.
             Equal("#FF0000FF", LedPalette.Classify(new LedColor(90, 120, 240), out _), "a blue flash is blue");
             Equal("#FFFF0000", LedPalette.Classify(new LedColor(230, 70, 50), out _), "a red flash is red");
+            // Measured above the redline in AMS2: the McLaren 720S GT3 Evo and the Cadillac V-Series.R,
+            // seven degrees apart and told apart by eye as well.
+            Equal("#FF00FFFF", LedPalette.Classify(new LedColor(78, 233, 249), out _), "the McLaren's flash is cyan");
+            Equal("#FF00BFFF", LedPalette.Classify(new LedColor(60, 206, 248), out _), "the Cadillac's flash is the lighter blue");
         }
 
         /// <summary>
