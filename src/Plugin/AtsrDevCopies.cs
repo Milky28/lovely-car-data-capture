@@ -8,7 +8,7 @@ using LovelyCarDataCapture.Profile;
 
 namespace LovelyCarDataCapture
 {
-    /// <summary>One file this plugin put in ATSR's Developer Mode folder.</summary>
+    /// <summary>One file this plugin put in ATSR's local RPM folder.</summary>
     public sealed class AtsrCopy
     {
         /// <summary>File name inside the folder, which is what ATSR matches the car on.</summary>
@@ -25,7 +25,7 @@ namespace LovelyCarDataCapture
 namespace LovelyCarDataCapture.Plugin
 {
     /// <summary>
-    /// Keeps track of the exports copied to ATSR's Developer Mode folder, so they can be tried on the
+    /// Keeps track of the exports copied to ATSR's local RPM folder, so they can be tried on the
     /// wheel straight after a drive and taken out again afterwards.
     /// </summary>
     /// <remarks>

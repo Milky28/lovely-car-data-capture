@@ -174,15 +174,17 @@ namespace LovelyCarDataCapture.Plugin
             {
                 var errors = _atsrCopies().Select(c => _removeAtsrCopy(c)).Where(x => x != null).ToList();
                 ShowAtsrCopies();
-                _atsrResult.Text = errors.Count == 0 ? "Removed. ATSR uses the repo's files again once Developer Mode is switched off and on."
+                _atsrResult.Text = errors.Count == 0 ? "Removed, and ATSR told to reload: it's back on the repo's files."
                                                      : "Some couldn't be removed: " + string.Join("; ", errors);
             };
             var atsrButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
             atsrButtons.Children.Add(openFolder);
             atsrButtons.Children.Add(removeAll);
-            _atsrSection = Section("Checking a file on the wheel (ATSR Developer Mode)", false,
-                Paragraph("With \"Copy each export to ATSR's Developer Mode folder\" ticked, every export is also put where ATSR looks first. " +
-                          "Straight after a drive, switch Developer Mode on in ATSR's RPM settings (or off and on again) and the wheel shows the new file."),
+            _atsrSection = Section("Checking a file on the wheel (ATSR)", false,
+                Paragraph("With \"Copy each export to ATSR's local RPM folder\" ticked, every export is also put where ATSR looks first, " +
+                          "and ATSR is told to reload (its Force RPM Reload), so the wheel shows the new file straight after the drive."),
+                Paragraph("ATSR only reads that folder while its Enable Local RPM Folder switch is on. It's set once, in ATSR-Hub EVO > " +
+                          "Universal Settings > RPM Settings > Developer Settings. No button needs binding to Force RPM Reload: this plugin presses it."),
                 Paragraph("While a copy is there ATSR uses it instead of the repo's file for that car, in every game: ATSR keeps one file per " +
                           "car id, so a car in two games shares it. Remove each copy once it's checked. Removed files go to the Recycle Bin."),
                 _atsrList,
@@ -226,10 +228,11 @@ namespace LovelyCarDataCapture.Plugin
             panel.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
                                      "Looks the car up on GitHub, read-only, and keeps its name, colours, gaps and anything not measured.",
                                      v => _settings.UseRepoFile = v));
-            panel.Children.Add(Check("Copy each export to ATSR's Developer Mode folder", settings.CopyToAtsrDeveloperFolder,
-                                     "Lets ATSR show the file on your wheel straight after the drive, before you submit it. Switch " +
-                                     "Developer Mode on in ATSR's RPM settings to load it, and remove the copy afterwards from " +
-                                     "\"Checking a file on the wheel\" above, or ATSR keeps using it instead of the repo's file.",
+            panel.Children.Add(Check("Copy each export to ATSR's local RPM folder", settings.CopyToAtsrDeveloperFolder,
+                                     "Puts the file on your wheel straight after the drive, before you submit it: the export is copied " +
+                                     "where ATSR looks first and ATSR is told to reload. Needs ATSR's Enable Local RPM Folder on (Universal " +
+                                     "Settings > RPM Settings > Developer Settings). Remove the copy afterwards from \"Checking a file on " +
+                                     "the wheel\" above, or ATSR keeps using it instead of the repo's file.",
                                      v => _settings.CopyToAtsrDeveloperFolder = v));
             panel.Children.Add(Check("Show the panel over the game", settings.ShowOverlay,
                                      "Says what each button press did and how the capture is going. Drag it anywhere; it never takes focus.",
@@ -272,7 +275,7 @@ namespace LovelyCarDataCapture.Plugin
                 return;
             }
             _atsrSection.IsExpanded = true;
-            _atsrSection.Header = "Checking a file on the wheel (ATSR Developer Mode) - " + copies.Count + " cop" + (copies.Count == 1 ? "y" : "ies") + " in use";
+            _atsrSection.Header = "Checking a file on the wheel (ATSR) - " + copies.Count + " cop" + (copies.Count == 1 ? "y" : "ies") + " in use";
             foreach (var copy in copies)
             {
                 var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
@@ -282,7 +285,7 @@ namespace LovelyCarDataCapture.Plugin
                 {
                     var error = _removeAtsrCopy(item);
                     ShowAtsrCopies();
-                    _atsrResult.Text = error == null ? item.File + " removed. Switch Developer Mode off and on in ATSR to go back to the repo's file."
+                    _atsrResult.Text = error == null ? item.File + " removed, and ATSR told to reload: that car is back on the repo's file."
                                                      : "Couldn't remove " + item.File + ": " + error;
                 };
                 row.Children.Add(remove);

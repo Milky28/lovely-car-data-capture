@@ -72,8 +72,9 @@ namespace LovelyCarDataCapture
         public int OverlayY { get; set; }
         public string RepoBranch { get; set; } = "main";
         /// <summary>
-        /// Also write the export to ATSR's Developer Mode folder (&lt;SimHub&gt;\_ATSR_DevelopmentData\rpm_data)
-        /// so it can be tried on real hardware before submitting.
+        /// Also write the export to ATSR's local RPM folder (&lt;SimHub&gt;\_ATSR_DevelopmentData\rpm_data),
+        /// read when "Enable Local RPM Folder" is on, and ask ATSR to reload - so it can be tried on real
+        /// hardware straight after the drive, before submitting.
         /// </summary>
         public bool CopyToAtsrDeveloperFolder { get; set; }
         /// <summary>The copies this plugin has put in that folder, so they can be listed and taken out again.</summary>

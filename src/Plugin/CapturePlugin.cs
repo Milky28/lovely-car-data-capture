@@ -510,7 +510,7 @@ namespace LovelyCarDataCapture
                 Say("Saved " + Path.GetFileName(path) + " to " + Path.GetDirectoryName(path) + "." +
                     " From " + result.Source + "." +
                     (result.AtsrProblems.Count > 0 ? " " + result.AtsrProblems.Count + " ATSR warning(s) in the report." : "") +
-                    (copied ? " Also copied to ATSR's Developer Mode folder: switch Developer Mode off and on in ATSR to see it on the wheel." : "") +
+                    (copied ? " Also copied to ATSR's local RPM folder and ATSR told to reload: with Enable Local RPM Folder on, the wheel shows it now." : "") +
                     " Read the report before submitting.");
             }
             catch (Exception ex)
@@ -520,7 +520,7 @@ namespace LovelyCarDataCapture
             }
         }
 
-        // Lets the file be tried on real hardware straight away: ATSR's Developer Mode reads this folder
+        // Lets the file be tried on real hardware straight away: with "Enable Local RPM Folder" on, ATSR reads this folder
         // before its own copy of the repo. Adds the outcome to the report.
         private static string SimHubFolder => Path.GetDirectoryName(typeof(CapturePlugin).Assembly.Location);
 
@@ -533,19 +533,21 @@ namespace LovelyCarDataCapture
                 var notes = AtsrDevCopies.Write(Settings, SimHubFolder, game, carId, json, encoding);
                 this.SaveCommonSettings("CaptureSettings", Settings);
                 _lastAtsrDevPath = devPath;
-                report.Add("Copied to ATSR's Developer Mode folder: " + devPath);
+                report.Add("Copied to ATSR's local RPM folder: " + devPath);
                 report.AddRange(notes);
-                report.Add("  To use it: in ATSR's RPM settings, turn Developer Mode on (or off and on again) to reload the file.");
-                report.Add("  If the lights don't change, restart SimHub.");
+                report.Add(ReloadAtsr()
+                    ? "  ATSR was told to reload (its Force RPM Reload), so the wheel shows this file now if \"Enable Local RPM Folder\" is on"
+                    : "  ATSR couldn't be told to reload; press its Force RPM Reload, or re-enter the car. The file is only read if");
+                report.Add("  (" + AtsrLocalFolderSetting + ").");
                 report.Add("  While it's there ATSR uses it instead of the repo's file for this car in every game. Remove it from");
-                report.Add("  the plugin's settings page (ATSR Developer Mode) once it's checked.");
-                SimHub.Logging.Current.Info(LogPrefix + "Copied to ATSR Developer Mode folder: " + devPath);
+                report.Add("  the plugin's settings page (Checking a file on the wheel) once it's checked.");
+                SimHub.Logging.Current.Info(LogPrefix + "Copied to ATSR's local RPM folder: " + devPath);
                 return true;
             }
             catch (Exception ex)
             {
-                report.Add("Couldn't copy to ATSR's Developer Mode folder (" + devPath + "): " + ex.Message);
-                SimHub.Logging.Current.Error(LogPrefix + "Copy to ATSR Developer Mode folder failed: " + devPath, ex);
+                report.Add("Couldn't copy to ATSR's local RPM folder (" + devPath + "): " + ex.Message);
+                SimHub.Logging.Current.Error(LogPrefix + "Copy to ATSR's local RPM folder failed: " + devPath, ex);
                 return false;
             }
         }
@@ -561,8 +563,39 @@ namespace LovelyCarDataCapture
         {
             var error = AtsrDevCopies.Remove(Settings, SimHubFolder, copy);
             this.SaveCommonSettings("CaptureSettings", Settings);
-            if (error == null) SimHub.Logging.Current.Info(LogPrefix + "Removed from ATSR Developer Mode folder: " + copy.File);
+            if (error == null)
+            {
+                SimHub.Logging.Current.Info(LogPrefix + "Removed from ATSR's local RPM folder: " + copy.File);
+                ReloadAtsr();      // back to the repo's file, if that car is the one loaded
+            }
             return error;
+        }
+
+        /// <summary>Where the switch that makes ATSR read the local folder lives.</summary>
+        internal const string AtsrLocalFolderSetting =
+            "ATSR-Hub EVO > Universal Settings > RPM Settings > Developer Settings > Enable Local RPM Folder";
+
+        /// <summary>ATSR's own "Force RPM Reload" action, as SimHub names it: its plugin class, then the action.</summary>
+        private const string AtsrReloadAction = "ATSRHubMain.ForceRPMReload";
+
+        /// <summary>
+        /// Presses ATSR's Force RPM Reload, which fetches the loaded car's file again, the local folder
+        /// first. It only does anything while a car is loaded - which, straight after a drive, it is.
+        /// </summary>
+        private bool ReloadAtsr()
+        {
+            try
+            {
+                if (PluginManager == null) return false;
+                PluginManager.TriggerAction(AtsrReloadAction);
+                SimHub.Logging.Current.Info(LogPrefix + "Asked ATSR to reload its RPM data.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(LogPrefix + "Couldn't trigger " + AtsrReloadAction + ": " + ex.Message);
+                return false;
+            }
         }
 
         private void LogRawTypeOnce(object raw)

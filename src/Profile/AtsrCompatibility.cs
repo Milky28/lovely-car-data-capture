@@ -18,7 +18,7 @@ namespace LovelyCarDataCapture.Profile
         public const string DevelopmentFolder = "_ATSR_DevelopmentData";
 
         /// <summary>
-        /// Where ATSR's Developer Mode reads car files from: &lt;SimHub folder&gt;\_ATSR_DevelopmentData\rpm_data\&lt;slug of carId&gt;.json.
+        /// Where ATSR reads car files from when "Enable Local RPM Folder" is on: &lt;SimHub folder&gt;\_ATSR_DevelopmentData\rpm_data\&lt;slug of carId&gt;.json.
         /// There's no game subfolder.
         /// </summary>
         public static string DevelopmentFilePath(string simHubFolder, string carId) =>

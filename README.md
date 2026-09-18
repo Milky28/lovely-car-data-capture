@@ -46,10 +46,12 @@ The ATSR SimHub plugin is the main consumer of these files, so every report ends
 
 ### Trying a file in ATSR before submitting
 
-Tick **Copy each export to ATSR's Developer Mode folder** on the settings page. Each export is then
-also written to `<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`, which ATSR reads when
-**Developer Mode** is on in its RPM settings. Straight after a drive, toggle Developer Mode (or re-enter
-the car) to make ATSR reload it; if the lights still don't change, restart SimHub.
+Switch on **Enable Local RPM Folder** in ATSR once (ATSR-Hub EVO > Universal Settings > RPM Settings >
+Developer Settings), then tick **Copy each export to ATSR's local RPM folder** on this plugin's settings
+page. Each export is then also written to `<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`,
+where ATSR looks before the repo, and the plugin presses ATSR's **Force RPM Reload** action
+(`ATSRHubMain.ForceRPMReload`) so the wheel shows the new file straight after the drive. The reload only
+acts while a car is loaded; if the lights don't change, press Force RPM Reload or re-enter the car.
 
 While a copy is there ATSR uses it instead of the repo's file for that car **in every game**: the
 folder is keyed by car id alone, so a car in two games (the McLaren 720S GT3 Evo in AMS2 and ACC)
@@ -210,7 +212,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | --- | --- | --- |
 | `UseRepoFile` | `true` | Look the car up on GitHub and build on its file. |
 | `RepoBranch` | `main` | |
-| `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's Developer Mode folder. |
+| `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's local RPM folder and have ATSR reload. |
 | `AtsrCopies` | `[]` | The plugin's own copies in that folder, kept so they can be listed and removed. |
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
