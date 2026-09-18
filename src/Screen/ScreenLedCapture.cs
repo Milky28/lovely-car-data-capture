@@ -181,6 +181,25 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Hue change that counts as a light no longer showing its own colour.</summary>
         private const double RedlineHueShift = 12.0;
 
+        /// <summary>How close together every lit light's hue has to be for the strip to count as one colour.</summary>
+        private const double OneColourDegrees = 8.0;
+
+        private static double HueDistance(double a, double b)
+        {
+            double d = Math.Abs(a - b) % 360;
+            return d > 180 ? 360 - d : d;
+        }
+
+        /// <summary>Widest gap between any two hues, the short way round - red sits at both ends of the scale.</summary>
+        private static double Spread(List<double> hues)
+        {
+            double widest = 0;
+            for (int a = 0; a < hues.Count; a++)
+                for (int b = a + 1; b < hues.Count; b++)
+                    widest = Math.Max(widest, HueDistance(hues[a], hues[b]));
+            return widest;
+        }
+
         /// <summary>
         /// Above the redline a strip stops showing its own colours and turns one colour, usually red.
         /// Looking for "every lit light is the same colour" isn't enough, because early in a climb only
@@ -212,20 +231,29 @@ namespace LovelyCarDataCapture.Screen
                 return;
             }
 
-            // A frame is in the redline state when the lights whose colour is known have all left it.
+            // A frame is in the redline state when the strip shows one colour although its lights
+            // normally show several - or, failing that, when most lights have left their own colour.
+            // The first test catches a redline colour that most of the strip already has: the AMS2 BMW
+            // M8 GTE turns every light the deep orange of six of its ten, so only the four green ones
+            // visibly change, too few for a majority.
             var redline = new bool?[_samples.Count];
             for (int i = 0; i < _samples.Count; i++)
             {
                 int known = 0, changed = 0;
+                var now = new List<double>();
+                var own = new List<double>();
                 for (int s = 0; s < layout.LedNumber; s++)
                 {
                     if (ownHue[s] < 0 || hues[i][s] < 0) continue;
                     known++;
-                    if (Math.Abs(hues[i][s] - ownHue[s]) > RedlineHueShift) changed++;
+                    now.Add(hues[i][s]);
+                    own.Add(ownHue[s]);
+                    if (HueDistance(hues[i][s], ownHue[s]) > RedlineHueShift) changed++;
                 }
                 if (known < 2) continue;
-                // A majority, not all of them: lights that are already the redline colour don't change.
-                redline[i] = changed * 2 > known;
+                bool oneColourNow = Spread(now) <= OneColourDegrees;
+                bool severalOwnColours = Spread(own) > RedlineHueShift;
+                redline[i] = (oneColourNow && severalOwnColours && changed > 0) || changed * 2 > known;
             }
 
             var risingAt = new List<double>();

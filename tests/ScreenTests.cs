@@ -486,6 +486,38 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Report.Any(l => l.Contains("blinks at the limiter")), "the report says the strip blinks");
         }
 
+        /// <summary>
+        /// A real capture of the AMS2 BMW M8 GTE, at 60 fps with the limiter held: a mirrored strip with
+        /// gaps that blinks at the limiter, every light turning the deep orange of the middle pair. The
+        /// blinks once swamped every threshold, and the colour change went unseen because most of the
+        /// strip already had the redline colour, so the report claimed the lights kept their own colours
+        /// while blinking. Checked by eye in the car: they all blink in the one colour.
+        /// </summary>
+        private static void ScreenRealBlinkingM8()
+        {
+            var capture = new ScreenLedCapture();
+            foreach (var f in LoadFrames(DataPath("ams2-bmw-m8-gte.frames.csv"))) capture.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = capture.Result();
+
+            // The repo's values, confirmed by this capture: mirrored, with gaps at LED 3 and 10.
+            var file = new[] { 6000, 6120, 0, 6240, 6360, 6480, 6480, 6360, 6240, 0, 6120, 6000 };
+            Equal(12, result.Layout.LedNumber, "slots on the strip");
+            Check(result.Layout.IsGap[2] && result.Layout.IsGap[9], "gaps at LED 3 and 10");
+            var gear = result.Gears.First(g => g.Gear == "3");
+            for (int i = 0; i < 12; i++)
+            {
+                if (file[i] == 0) continue;
+                Check(gear.Leds[i] != null && Math.Abs(gear.Leds[i].Rpm - file[i]) <= 20,
+                      "LED " + (i + 1) + " is about " + file[i] + ", not the limiter: " + (gear.Leds[i]?.Rpm.ToString() ?? "none"));
+            }
+            Check(result.BlinkSeen && result.BlinkIntervalMs >= 85 && result.BlinkIntervalMs <= 125,
+                  "the blink is timed at about 100 ms, got " + result.BlinkIntervalMs);
+            Check(result.RedlineRpm.HasValue && Math.Abs(result.RedlineRpm.Value - 6600) <= 30,
+                  "the redline is about 6600, got " + result.RedlineRpm);
+            Check(!result.RedlineFromBlink, "the colour change was seen, so the redline didn't have to come from the blink");
+            Check(!result.Notes.Any(n => n.Contains("keeps its own colours")), "no claim that the lights keep their own colours");
+        }
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {

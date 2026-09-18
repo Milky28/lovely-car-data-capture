@@ -65,6 +65,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen capture handles a light that comes on at the redline", ScreenLastPairLightsAtTheRedline);
             Run("Screen capture pools gears that agree", ScreenPoolsAgreeingGears);
             Run("Screen capture keeps a blinking strip out of the thresholds", ScreenBlinkingStripIsNotAThreshold);
+            Run("A real blinking M8 capture reads correctly", ScreenRealBlinkingM8);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);
