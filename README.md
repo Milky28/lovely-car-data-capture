@@ -46,11 +46,17 @@ The ATSR SimHub plugin is the main consumer of these files, so every report ends
 
 ### Trying a file in ATSR before submitting
 
-Set `CopyToAtsrDeveloperFolder` to `true`. Each export is then also written to
-`<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`, which ATSR reads when **Developer
-Mode** is on in its RPM settings. Toggle Developer Mode (or re-enter the car) to make ATSR reload it;
-if the lights still don't change, restart SimHub. Delete the copy afterwards or ATSR keeps using it
-instead of the repo's file.
+Tick **Copy each export to ATSR's Developer Mode folder** on the settings page. Each export is then
+also written to `<SimHub folder>\_ATSR_DevelopmentData\rpm_data\<carId>.json`, which ATSR reads when
+**Developer Mode** is on in its RPM settings. Straight after a drive, toggle Developer Mode (or re-enter
+the car) to make ATSR reload it; if the lights still don't change, restart SimHub.
+
+While a copy is there ATSR uses it instead of the repo's file for that car **in every game**: the
+folder is keyed by car id alone, so a car in two games (the McLaren 720S GT3 Evo in AMS2 and ACC)
+shares one file. The settings page's **Checking a file on the wheel** section lists the plugin's
+copies with the game and time each came from, and removes them (to the Recycle Bin) once checked. The
+report says when an export replaced another game's copy, and a file there that the plugin didn't write
+is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritten.
 
 ## Install
 
@@ -205,6 +211,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `UseRepoFile` | `true` | Look the car up on GitHub and build on its file. |
 | `RepoBranch` | `main` | |
 | `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's Developer Mode folder. |
+| `AtsrCopies` | `[]` | The plugin's own copies in that folder, kept so they can be listed and removed. |
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
 | `ScreenCaptureFps` | `30` | Frames read per second, 30 or 60. Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames to time, or one that revs very quickly; it roughly doubles the CPU a capture uses. Also on the plugin's page. |
