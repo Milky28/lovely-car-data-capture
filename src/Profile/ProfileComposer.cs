@@ -245,6 +245,10 @@ namespace LovelyCarDataCapture.Profile
                               " rpm, below the last light at " + lastLit + " rpm, so the redline was set to the light. " +
                               "The two happen within a few rpm of each other on this car.");
                 }
+                else if (sr.SteadyAtLimiterRpm.HasValue && baseline == null)
+                    // Nothing happens at the limiter: the redline goes there, transparent (see the colours),
+                    // so ATSR never repaints the strip before the game would.
+                    row[0] = Math.Max(sr.SteadyAtLimiterRpm.Value, lastLit);
                 else if (row[0] < lastLit)
                 {
                     row[0] = lastLit;
@@ -442,7 +446,7 @@ namespace LovelyCarDataCapture.Profile
         {
             var layout = sr.Layout;
             var suggested = new string[layout.LedNumber + 1];
-            suggested[0] = sr.RedlineFromBlink ? "#00000000" : sr.RedlineColor ?? Red;
+            suggested[0] = sr.RedlineFromBlink || sr.SteadyAtLimiterRpm.HasValue ? "#00000000" : sr.RedlineColor ?? Red;
             for (int i = 0; i < layout.LedNumber; i++)
             {
                 var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
@@ -458,6 +462,9 @@ namespace LovelyCarDataCapture.Profile
             {
                 p.LedColor = suggested.ToList();
                 notes.Add("LED colors come from the screen" + (sr.ColorsDoubtful ? ", and some were hard to tell apart" : "") + "; check them in the RPM LED Builder.");
+                if (sr.SteadyAtLimiterRpm.HasValue && !sr.RedlineRpm.HasValue)
+                    notes.Add("The redline was put at the limiter, about " + sr.SteadyAtLimiterRpm + " rpm, with a transparent colour (#00000000), " +
+                              "so ATSR keeps the strip in its own colours there, as the game does.");
                 return;
             }
 

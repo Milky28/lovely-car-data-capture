@@ -178,6 +178,20 @@ namespace LovelyCarDataCapture.Tests
             Check(values[0] > 6000 && values.Last() < 7800, "between 6000 and the redline: " + string.Join(",", values));
         }
 
+        private static void ScreenRealNoRedlineEffect()
+        {
+            // PMR's Audi R8 (LMP900): five lights, held at the limiter with nothing changing.
+            var session = new CaptureSession("ProjectMotorRacing", "R8 (LMP900)");
+            foreach (var f in LoadFrames(DataPath("pmr-r8-lmp900.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var p = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 18)).Profile;
+            Equal("#00000000", p.LedColor[0], "no redline effect: a transparent redline colour");
+            Check(p.LedRpm["N"][0] > 7800, "the redline is at the limiter, not the last light: " + p.LedRpm["N"][0]);
+            Equal(0, p.RedlineBlinkInterval, "no blink");
+            var file = new[] { 6160, 6505, 6840, 7205, 7550 };
+            for (int i = 0; i < 5; i++)
+                Check(Math.Abs(p.LedRpm["N"][i + 1] - file[i]) <= 20, "LED " + (i + 1) + " is about " + file[i] + ", got " + p.LedRpm["N"][i + 1]);
+        }
+
         private static string PmrViperJson() => @"{
   ""carName"": ""SRT Viper GTS-R"",
   ""carId"": ""SRT Viper GTS-R"",

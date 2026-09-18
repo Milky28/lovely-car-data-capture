@@ -74,6 +74,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen detector finds white-hot lights by their glow (PMR)", ScreenDetectorWhiteCores);
             Run("A real PMR capture reads through an 80 ms display lag", ScreenRealPmrLag);
             Run("A real PMR C8.R capture reads past the pit limiter and a blue sweep", ScreenRealPmrC8);
+            Run("A car with no redline effect gets a transparent redline at the limiter", ScreenRealNoRedlineEffect);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);

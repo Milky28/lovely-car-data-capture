@@ -47,6 +47,11 @@ namespace LovelyCarDataCapture.Screen
         /// rather than blinking to dark: how long each own-colour phase lasts, in milliseconds.
         /// </summary>
         public int? FlashOwnMs;
+        /// <summary>
+        /// Set when the limiter was held with the whole strip lit in its own colours and nothing
+        /// changing - a car with no redline effect at all: the highest revs reached, to the nearest 10.
+        /// </summary>
+        public int? SteadyAtLimiterRpm;
         public int? FlashRedlineMs;
         public int FlashCount;
         public int Samples;
@@ -1036,6 +1041,23 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>A strip that stays lit above the redline says so, so a file claiming it blinks can be checked.</summary>
         private void ReportSolidRedline(bool[][] lit, ScreenLedResult result)
         {
+            if (!result.RedlineRpm.HasValue && !result.BlinkSeen && !result.FlashOwnMs.HasValue && _samples.Count > 0)
+            {
+                // No colour change and no blink: either the limiter was never reached, or the car has no
+                // redline effect. Held there with the whole strip lit, it's the second - PMR's Audi R8
+                // (LMP900) sat at its limiter for seconds with all five lights steady.
+                int lights = result.Layout.LedNumber - result.Layout.GapCount;
+                int highest = _samples.Max(x => x.Rpm);
+                int held = Enumerable.Range(0, _samples.Count).Count(i => _samples[i].Rpm >= highest - SteadyBandRpm && lit[i].Count(v => v) >= lights - 1);
+                if (held >= SteadyFrames)
+                {
+                    result.SteadyAtLimiterRpm = RoundTo(highest, 10);
+                    result.Notes.RemoveAll(n => n.StartsWith("The strip never changed colour"));   // it was held there; this says why
+                    result.Notes.Add("At the limiter (about " + result.SteadyAtLimiterRpm + " rpm, " + held + " frames) every light stayed on in its own " +
+                                     "colour, with no colour change or blink: this car has no redline effect.");
+                }
+                return;
+            }
             if (result.BlinkSeen || result.FlashOwnMs.HasValue || !result.RedlineRpm.HasValue) return;
             int above = _samples.Count(s => s.Rpm > result.RedlineRpm.Value);
             if (above > 30)
@@ -1044,6 +1066,12 @@ namespace LovelyCarDataCapture.Screen
             else
                 result.Notes.Add("The redline was never held long enough to check for blinking.");
         }
+
+        /// <summary>How close to the highest revs a frame has to be to count as at the limiter.</summary>
+        private const int SteadyBandRpm = 150;
+
+        /// <summary>Frames at the limiter with the strip steady before it counts as having no redline effect.</summary>
+        private const int SteadyFrames = 60;
 
         private static double Median(List<double> values)
         {
