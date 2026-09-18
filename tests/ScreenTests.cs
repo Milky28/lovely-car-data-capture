@@ -192,6 +192,16 @@ namespace LovelyCarDataCapture.Tests
                 Check(Math.Abs(p.LedRpm["N"][i + 1] - file[i]) <= 20, "LED " + (i + 1) + " is about " + file[i] + ", got " + p.LedRpm["N"][i + 1]);
         }
 
+        private static void ScreenCaptureStopsWhenFull()
+        {
+            var capture = new ScreenLedCapture();
+            var blob = new LitBlob { Left = 10, Right = 20, Color = new LedColor(0, 255, 0) };
+            for (int i = 0; i < ScreenLedCapture.MaxSamples; i++) capture.Record("3", 5000, i * 17, new[] { blob });
+            Check(capture.IsFull, "full at MaxSamples frames");
+            capture.Record("3", 5000, 0, new[] { blob });
+            Equal(ScreenLedCapture.MaxSamples, capture.SampleCount, "nothing more is kept once full");
+        }
+
         private static string PmrViperJson() => @"{
   ""carName"": ""SRT Viper GTS-R"",
   ""carId"": ""SRT Viper GTS-R"",

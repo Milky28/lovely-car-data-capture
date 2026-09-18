@@ -42,6 +42,7 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
 5. Press **Stop and export**.
 
 The car file and its report are written to `Documents\SimHub\LovelyCarDataCapture\<game>\`.
+Forgot to stop? Closing SimHub exports a capture that's still running.
 Read the report: it says what was measured, how tightly, what was left out and why. From the
 Ginetta's:
 

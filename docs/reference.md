@@ -35,6 +35,15 @@ copies with the game and time each came from, and removes them (to the Recycle B
 report says when an export replaced another game's copy, and a file there that the plugin didn't write
 is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritten.
 
+## How long a capture runs
+
+A capture runs until *Stop and export*, *ResetCapture* or SimHub closes. It keeps up to 72,000 screen
+frames - 20 minutes at 60 frames a second, 40 at 30 - which is far more than a capture needs. When
+it's full, the panel over the game says so and nothing more is recorded. While there's nothing to
+record (the game paused, in a menu or closed) the plugin looks at the screen only twice a second.
+Closing SimHub with a capture still running exports it, waiting up to three seconds for the repo
+file; the report says it was exported that way.
+
 ## Watching it while you drive
 
 Mapped buttons are pressed with the game covering everything, so the plugin shows a small panel over it:

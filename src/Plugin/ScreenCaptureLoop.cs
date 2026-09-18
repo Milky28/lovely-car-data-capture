@@ -12,6 +12,8 @@ namespace LovelyCarDataCapture.Plugin
         public string Gear;
         public int Rpm;
         public ScreenLedCapture Capture;
+        /// <summary>The capture has all the frames it can keep: nothing to read the screen for.</summary>
+        public bool Full;
     }
 
     /// <summary>
@@ -30,6 +32,13 @@ namespace LovelyCarDataCapture.Plugin
         private volatile bool _running;
         private PixelRect _region;
         private int _intervalMs = 33;
+
+        /// <summary>
+        /// How often to look again while there's nothing to record - the game paused, in a menu or
+        /// closed, or the capture full. Reading and analysing the box 60 times a second only to throw
+        /// every frame away is CPU for nothing, however long a capture is left running.
+        /// </summary>
+        private const int IdleIntervalMs = 500;
 
         /// <summary>Returns what the frame should be recorded against, or null to drop it.</summary>
         public Func<ScreenTarget> Target;
@@ -75,6 +84,12 @@ namespace LovelyCarDataCapture.Plugin
                     try
                     {
                         var target = Target?.Invoke();
+                        if (target == null || target.Full)
+                        {
+                            _status = target != null ? "capture full - press Stop and export" : "waiting for the car";
+                            Thread.Sleep(IdleIntervalMs);
+                            continue;
+                        }
                         var frame = grabber.Grab(_region, out string problem);
                         if (frame == null)
                         {
@@ -91,15 +106,8 @@ namespace LovelyCarDataCapture.Plugin
                             var blobs = _detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
                             _lights = blobs.Count;
                             Interlocked.Increment(ref _frames);
-                            if (target == null)
-                            {
-                                _status = "watching (" + blobs.Count + " lights) - waiting for the car";
-                            }
-                            else
-                            {
-                                target.Capture.Record(target.Gear, target.Rpm, _clock.ElapsedMilliseconds, blobs);
-                                _status = "recording, " + blobs.Count + " lights lit";
-                            }
+                            target.Capture.Record(target.Gear, target.Rpm, _clock.ElapsedMilliseconds, blobs);
+                            _status = "recording, " + blobs.Count + " lights lit";
                         }
                     }
                     catch (Exception ex)

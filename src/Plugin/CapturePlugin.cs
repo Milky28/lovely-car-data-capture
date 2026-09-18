@@ -22,6 +22,12 @@ namespace LovelyCarDataCapture
     {
         private const string LogPrefix = "[LovelyCarDataCapture] ";
         private static readonly TimeSpan RepoWaitOnExport = TimeSpan.FromSeconds(10);
+        /// <summary>How long SimHub's shutdown may wait on GitHub for the repo file before exporting without it.</summary>
+        private static readonly TimeSpan RepoWaitOnShutdown = TimeSpan.FromSeconds(3);
+        /// <summary>Set while SimHub closes, so nothing opens a window on the way out.</summary>
+        private volatile bool _shuttingDown;
+        /// <summary>The capture has been told it's full, so it isn't said again every frame.</summary>
+        private bool _fullReported;
 
         // Actions arrive on a different thread than DataUpdate.
         private readonly object _lock = new object();
@@ -136,6 +142,7 @@ namespace LovelyCarDataCapture
                     if (_session != null)
                         SimHub.Logging.Current.Warn(LogPrefix + "Car changed from " + _session.CarId + " to " + d.CarId + "; the previous capture was discarded. Export before switching cars.");
                     _session = new CaptureSession(data.GameName, d.CarId);
+                    _fullReported = false;
                     StartRepoLookup(data.GameName, d.CarId);
                 }
 
@@ -175,6 +182,19 @@ namespace LovelyCarDataCapture
 
         public void End(PluginManager pluginManager)
         {
+            _shuttingDown = true;
+            // A capture left running when SimHub closes would otherwise be lost with it.
+            bool hasData;
+            lock (_lock)
+                hasData = _capturing && _session != null &&
+                          (_session.Screen.HasData || _session.F1.HasData || _session.IRacing.HasData || _session.Marks.HasData);
+            if (hasData)
+            {
+                SimHub.Logging.Current.Info(LogPrefix + "SimHub is closing with a capture running; exporting it.");
+                try { StopAndExport(RepoWaitOnShutdown, onShutdown: true); }
+                catch (Exception ex) { SimHub.Logging.Current.Error(LogPrefix + "Export on close failed", ex); }
+            }
+            _capturing = false;
             _screen.Stop();
             CloseOverlay();
             this.SaveCommonSettings("CaptureSettings", Settings);
@@ -187,7 +207,7 @@ namespace LovelyCarDataCapture
         /// </summary>
         private void Say(string message)
         {
-            if (!Settings.ShowOverlay) return;
+            if (!Settings.ShowOverlay || _shuttingDown) return;
             OnUiThread(() =>
             {
                 EnsureOverlay();
@@ -197,7 +217,7 @@ namespace LovelyCarDataCapture
 
         private void ShowOverlay(bool capturing)
         {
-            if (!Settings.ShowOverlay) return;
+            if (!Settings.ShowOverlay || _shuttingDown) return;
             OnUiThread(() =>
             {
                 EnsureOverlay();
@@ -296,6 +316,17 @@ namespace LovelyCarDataCapture
             {
                 if (!_capturing || _session == null || _skipScreenFrame) return null;
                 if (_session.F1.HasData || _session.IRacing.HasData) return null;
+                if (_session.Screen.IsFull)
+                {
+                    if (!_fullReported)
+                    {
+                        _fullReported = true;
+                        int minutes = (int)Math.Round(ScreenLedCapture.MaxSamples / (double)Math.Max(1, Settings.ScreenCaptureFps) / 60);
+                        SimHub.Logging.Current.Warn(LogPrefix + "Capture full after " + ScreenLedCapture.MaxSamples + " frames; nothing more is recorded.");
+                        Say("Capture full: about " + minutes + " minutes of frames are kept and nothing more is recorded. Press Stop and export.");
+                    }
+                    return new ScreenTarget { Full = true };
+                }
                 return new ScreenTarget { Gear = _currentGear, Rpm = _currentRpm, Capture = _session.Screen };
             }
         }
@@ -437,7 +468,9 @@ namespace LovelyCarDataCapture
             }, TaskScheduler.Default);
         }
 
-        private void StopAndExport()
+        private void StopAndExport() => StopAndExport(RepoWaitOnExport, onShutdown: false);
+
+        private void StopAndExport(TimeSpan repoWait, bool onShutdown)
         {
             _capturing = false;
             _screen.Stop();
@@ -462,7 +495,7 @@ namespace LovelyCarDataCapture
             RepoLookup lookup = null;
             if (lookupTask != null)
             {
-                lookup = lookupTask.Wait(RepoWaitOnExport)
+                lookup = lookupTask.Wait(repoWait)
                     ? lookupTask.Result
                     : new RepoLookup { Status = RepoLookupStatus.Failed, Error = "timed out waiting for GitHub" };
             }
@@ -473,6 +506,9 @@ namespace LovelyCarDataCapture
             lock (_lock)
             {
                 result = ProfileComposer.Compose(session, Settings, lookup, DateTime.Now);
+                if (onShutdown)
+                    result.Report.Insert(Math.Min(2, result.Report.Count),
+                        "Exported automatically: SimHub was closed while this capture was still running." + Environment.NewLine);
                 json = result.Profile.ToJson();
                 var root = OutputFolder();
                 // Always named after the carId: that's the file name ATSR looks for, even when the repo's file is named differently.

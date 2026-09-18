@@ -100,6 +100,8 @@ namespace LovelyCarDataCapture.Screen
         private bool[] _indicatorFrame = new bool[0];
 
         public bool HasData => _recorded.Count > 0;
+        /// <summary>No more frames can be kept: <see cref="MaxSamples"/> have been recorded.</summary>
+        public bool IsFull => _recorded.Count >= MaxSamples;
         public int SampleCount => _recorded.Count;
         public int MostLightsSeen => _calibration.MostLightsInOneFrame;
 
