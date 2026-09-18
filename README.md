@@ -10,6 +10,13 @@ reads them from telemetry.
 
 *A community tool, not made by or affiliated with Lovely Sim Racing or ATSR.*
 
+<p align="center">
+  <img src="docs/images/wheel-matches-game.jpg" width="480"
+       alt="ACC's Ginetta G55 GT4 dash lights on screen, and a Conspit wheel below showing the same lights from the captured file">
+  <br><em>ACC's Ginetta G55 GT4, a car new to the repo: the game's lights on screen, and the wheel below
+  driven by ATSR from the file this plugin wrote.</em>
+</p>
+
 ## Install
 
 1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases/latest).
@@ -19,6 +26,8 @@ reads them from telemetry.
 
 Not listed? Right-click the DLL, choose *Properties*, tick *Unblock*, and start SimHub again.
 
+<img src="docs/images/plugin-page.png" width="720" alt="The plugin's page in SimHub, with its buttons, help sections and options">
+
 ## Your first capture
 
 Run the game **borderless or windowed**, and turn off head movement and camera shake.
@@ -26,13 +35,33 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
 1. **Sit in the car** with the rev lights in view.
 2. On the plugin's page press **Pick the lights…**, then switch to the game. Five seconds later it
    takes a still of the screen: draw a box round the lights, a little outside them, and press Enter.
+   The banner says how many lit lights it finds in the box.
+
+   <img src="docs/images/pick-the-lights.jpg" width="360" alt="A still of ACC with an orange box drawn round the dash's rev lights and a banner reporting six lit lights found">
 3. Press **Start capture**.
 4. **Rev slowly from idle to the limiter**, three or four times, in two or three gears. Hold the
-   limiter for a second or two each time. Braking mid-sweep is fine.
+   limiter for a second or two each time. Braking mid-sweep is fine. A panel over the game shows
+   what's being recorded.
+
+   <img src="docs/images/capturing.jpg" width="420" alt="The recording panel over ACC: gear 2, 6768 rpm, 6 lights lit, 791 frames">
 5. Press **Stop and export**.
 
 The car file and its report are written to `Documents\SimHub\LovelyCarDataCapture\<game>\`.
-Read the report: it says what was measured, what was left out and why.
+Read the report: it says what was measured, how tightly, what was left out and why. From the
+Ginetta's:
+
+```text
+Gear 3: 8/8 lights seen, 688 rising frames
+  LED  1    6295  4 climbs, agreeing within 22 rpm
+  LED  2    6500  4 climbs, agreeing within 6 rpm; off at 6496, the two averaged
+  LED  3    6700  3 climbs, agreeing within 13 rpm
+  LED  4    6895  3 climbs, agreeing within 8 rpm
+  ...
+Colors measured on screen:
+  LED 1, 2, 7, 8: rgb(158,245,165) -> green #FF00FF00
+  LED 3, 6: rgb(246,242,165) -> yellow #FFFFFF00
+  Redline color rgb(255,139,153) -> #FFFF0000 from 6895 rpm
+```
 
 Games that pause when they lose focus: map **StartCapture**, **StopAndExport** and
 **PickCaptureBox** to wheel buttons in SimHub's *Controls and events*. A panel over the game
@@ -43,7 +72,9 @@ confirms each press.
 If you use ATSR, you can see the new file on your wheel straight after the drive:
 
 1. In ATSR, switch on **Enable Local RPM Folder** (ATSR-Hub EVO > Universal Settings > RPM Settings >
-   Developer Settings).
+   Developer Settings). You don't need to bind Force RPM Reload: the plugin presses it for you.
+
+   <img src="docs/images/atsr-local-rpm-folder.png" width="560" alt="ATSR's Developer Settings with Enable Local RPM Folder switched on">
 2. On this plugin's page, tick **Copy each export to ATSR's local RPM folder**.
 
 Each export then goes to your wheel as soon as it's saved. While a copy is there ATSR uses it instead
