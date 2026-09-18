@@ -118,6 +118,22 @@ namespace LovelyCarDataCapture.Tests
         }
 
         // ---------- the detector, on real frames ----------
+        private static void ScreenDetectorWhiteCores()
+        {
+            // PMR's Viper: lit lights are white-hot with a coloured glow, on a faintly blue carbon rim
+            // that passes the ordinary colour test, so that test sees one long smear.
+            var detector = new StripDetector();
+            var region = new PixelRect(0, 0, 400, 140);
+            Equal(0, detector.Detect(LoadFrame("pmr-viper-idle.png"), region).Count, "nothing lit at idle, the rim included");
+            var partial = detector.Detect(LoadFrame("pmr-viper-partial.png"), region);
+            Equal(2, partial.Count, "the outer pair lights first");
+            Check(partial.All(b => b.Color.Hue > 190 && b.Color.Hue < 230), "the outer pair is blue: " + string.Join(", ", partial.Select(b => b.Color)));
+            var full = detector.Detect(LoadFrame("pmr-viper-full.png"), region);
+            Equal(8, full.Count, "all eight at the limiter");
+            string Name(LitBlob b) => b.Color.Hue < 25 || b.Color.Hue > 340 ? "red" : b.Color.Hue < 75 ? "yellow" : b.Color.Hue < 160 ? "green" : "blue";
+            Equal("blue green yellow red red yellow green blue", string.Join(" ", full.Select(Name)), "colours from the outside in");
+        }
+
         private static void ScreenDetectorOnFrames()
         {
             var detector = new StripDetector();

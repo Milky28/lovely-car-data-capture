@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LovelyCarDataCapture.Screen
 {
@@ -99,6 +100,14 @@ namespace LovelyCarDataCapture.Screen
         public int MinWidth = 6;
         /// <summary>Wider than this is glare or two lights bloomed together, not one light.</summary>
         public int MaxWidth = 40;
+        /// <summary>A white-hot light centre has every channel at least this bright.</summary>
+        public int CoreBrightness = 235;
+        /// <summary>Columns need this many white-hot pixels to be a light's centre: a rim highlight is thinner.</summary>
+        public int MinCorePixels = 6;
+        /// <summary>How far round a white centre to look for the glow that gives its colour.</summary>
+        public int HaloReach = 8;
+        /// <summary>Glow pixels this far from grey, relative to their brightness, carry the light's colour.</summary>
+        public double HaloSaturation = 0.45;
     }
 
     /// <summary>
@@ -151,9 +160,89 @@ namespace LovelyCarDataCapture.Screen
                 }
             }
 
+            bool smeared = blobs.Any(b => b.Width > _cfg.MaxWidth);
             blobs.RemoveAll(b => b.Width < _cfg.MinWidth || b.Width > _cfg.MaxWidth);
             foreach (var blob in blobs) blob.Color = MeasureColor(frame, blob, y0, y1);
+
+            // Some games draw a lit light white-hot with only a coloured glow round it, on a surface
+            // that is itself faintly coloured - PMR's Viper, on a blue-grey carbon rim. The colour test
+            // then sees one long smear, or only the rim. The white centres stay separate, so they're
+            // used instead whenever the colour test came up with a smear or nothing.
+            if (smeared || blobs.Count == 0)
+            {
+                var cores = DetectCores(frame, x0, x1, y0, y1);
+                if (cores.Count > 0 || smeared) return cores;
+            }
             return blobs;
+        }
+
+        /// <summary>Lights found by their white-hot centres, each coloured by the glow around it.</summary>
+        private List<LitBlob> DetectCores(PixelFrame frame, int x0, int x1, int y0, int y1)
+        {
+            var core = new bool[x1 - x0];
+            for (int x = x0; x < x1; x++)
+            {
+                int count = 0;
+                for (int y = y0; y < y1; y++)
+                {
+                    frame.GetPixel(x, y, out int r, out int g, out int b);
+                    if (Math.Min(r, Math.Min(g, b)) >= _cfg.CoreBrightness) count++;
+                }
+                core[x - x0] = count >= _cfg.MinCorePixels;
+            }
+
+            var blobs = new List<LitBlob>();
+            int start = -1;
+            for (int i = 0; i <= core.Length; i++)
+            {
+                bool lit = i < core.Length && core[i];
+                if (lit && start < 0) start = i;
+                if (!lit && start >= 0)
+                {
+                    int left = start + x0, right = i - 1 + x0;
+                    if (blobs.Count > 0 && left - blobs[blobs.Count - 1].Right <= _cfg.MergeGap)
+                        blobs[blobs.Count - 1].Right = right;
+                    else
+                        blobs.Add(new LitBlob { Left = left, Right = right });
+                    start = -1;
+                }
+            }
+            blobs.RemoveAll(b => b.Width < _cfg.MinWidth || b.Width > _cfg.MaxWidth);
+            foreach (var blob in blobs) blob.Color = MeasureGlow(frame, blob, x0, x1, y0, y1);
+            blobs.RemoveAll(b => b.Color.Hue < 0);     // white with no coloured glow: a highlight, not a light
+            return blobs;
+        }
+
+        /// <summary>
+        /// Colour of the glow round a white-hot centre: its most strongly coloured pixels, within a few
+        /// pixels of the centre, so the neighbours' glow and a tinted surface don't get a say.
+        /// </summary>
+        private LedColor MeasureGlow(PixelFrame frame, LitBlob blob, int x0, int x1, int y0, int y1)
+        {
+            int top = int.MaxValue, bottom = int.MinValue;
+            for (int x = blob.Left; x <= blob.Right; x++)
+                for (int y = y0; y < y1; y++)
+                {
+                    frame.GetPixel(x, y, out int r, out int g, out int b);
+                    if (Math.Min(r, Math.Min(g, b)) < _cfg.CoreBrightness) continue;
+                    top = Math.Min(top, y);
+                    bottom = Math.Max(bottom, y);
+                }
+            if (top > bottom) return new LedColor(0, 0, 0);
+
+            var glow = new List<Tuple<double, int, int, int>>();
+            for (int x = Math.Max(x0, blob.Left - _cfg.HaloReach); x <= Math.Min(x1 - 1, blob.Right + _cfg.HaloReach); x++)
+                for (int y = Math.Max(y0, top - _cfg.HaloReach); y <= Math.Min(y1 - 1, bottom + _cfg.HaloReach); y++)
+                {
+                    frame.GetPixel(x, y, out int r, out int g, out int b);
+                    int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                    if (max < _cfg.MinBrightness) continue;
+                    double saturation = (max - min) / (double)max;
+                    if (saturation >= _cfg.HaloSaturation) glow.Add(Tuple.Create(saturation, r, g, b));
+                }
+            if (glow.Count == 0) return new LedColor(0, 0, 0);
+            var strongest = glow.OrderByDescending(p => p.Item1).Take(Math.Max(1, glow.Count * 3 / 10)).ToList();
+            return new LedColor((int)strongest.Average(p => p.Item2), (int)strongest.Average(p => p.Item3), (int)strongest.Average(p => p.Item4));
         }
 
         /// <summary>
