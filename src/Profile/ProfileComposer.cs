@@ -292,27 +292,51 @@ namespace LovelyCarDataCapture.Profile
             var capturedGears = results.Select(r => r.Gear).ToList();
             var kept = p.GearOrder.Where(g => !capturedGears.Contains(g)).ToList();
 
-            // Two gears measured right through that agree are evidence the car uses one set of lights
-            // for every gear, which nearly all do. That beats keeping repo values in the gears a real
-            // track gives no room to sweep, and it's said plainly in the report either way.
-            var complete = results.Where(r => Enumerable.Range(0, r.Leds.Length).All(i => layout.IsGap[i] || Trusted(r.Leds[i])))
-                                  .Select(r => r.Gear).ToList();
-            bool uniform = complete.Count >= 2 && complete.Skip(1).All(g =>
-                Enumerable.Range(1, p.LedNumber).All(i => Math.Abs(p.LedRpm[g][i] - p.LedRpm[complete[0]][i]) <= UniformRpm));
-            if (bestGear != null && uniform)
+            // Nearly every car uses one set of lights for all its gears, and a real track rarely gives
+            // room to sweep any single gear from idle to the limiter. So the gears are pooled: where
+            // they measured the same light they have to agree, and what one gear missed another fills
+            // in. Disagreement beyond a few rpm is taken at face value - that car really does differ
+            // per gear - and each gear keeps its own values.
+            var byLed = new List<int>[p.LedNumber + 1];
+            for (int i = 0; i <= p.LedNumber; i++) byLed[i] = new List<int>();
+            foreach (var gr in results)
+                for (int i = 0; i < gr.Leds.Length; i++)
+                    if (!layout.IsGap[i] && Trusted(gr.Leds[i])) byLed[i + 1].Add(gr.Leds[i].Rpm);
+
+            bool measuredTwice = byLed.Any(v => v.Count >= 2);
+            bool agree = byLed.All(v => v.Count == 0 || v.Max() - v.Min() <= UniformRpm);
+            var measuredLeds = Enumerable.Range(1, p.LedNumber).Where(i => byLed[i].Count > 0).ToList();
+
+            if (bestGear != null && measuredTwice && agree)
             {
-                // Every gear, not just the ones that weren't swept: the few rpm between two measurements
-                // of the same thing are noise, and a file that repeats them pretends they mean something.
-                foreach (var gear in p.GearOrder.Where(g => g != bestGear).ToList())
-                    p.LedRpm[gear] = (int[])p.LedRpm[bestGear].Clone();
-                notes.Add("Gear " + string.Join(", ", complete) + " were measured right through and agree within " +
-                          UniformRpm + " rpm, so this car uses the same lights in every gear; gear " + bestGear +
-                          "'s values were used for all of them. If this car really does differ per gear, capture those gears and export again.");
+                var pooled = (int[])p.LedRpm[bestGear].Clone();
+                foreach (int led in measuredLeds) pooled[led] = Median(byLed[led]);
+                int last = measuredLeds.Select(i => pooled[i]).DefaultIfEmpty(0).Max();
+                var redlines = results.Select(r => p.LedRpm[r.Gear][0]).Where(v => v > 0).ToList();
+                pooled[0] = Math.Max(redlines.Count > 0 ? Median(redlines) : pooled[0], last);
+                foreach (var gear in p.GearOrder) p.LedRpm[gear] = (int[])pooled.Clone();
+
+                notes.Add("Gear " + string.Join(", ", results.Select(r => r.Gear)) + " agree within " + UniformRpm +
+                          " rpm wherever they measured the same light, so this car uses the same lights in every gear: " +
+                          "they were pooled and used for all of them. If this car really does differ per gear, sweep each " +
+                          "gear on its own and export again.");
+                var never = Enumerable.Range(1, p.LedNumber).Where(i => !layout.IsGap[i - 1] && byLed[i].Count == 0).ToList();
+                if (never.Count > 0)
+                    notes.Add("LED " + string.Join(", ", never) + " were never measured in any gear; " +
+                              (baseline != null ? "the repo values were kept." : "they were left at 0."));
+                return;
             }
-            else if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
+
+            if (bestGear != null && measuredLeds.Count > 0 && !agree)
             {
-                // Also over gears that were driven but not fully measured: a row half from the repo and
-                // half from the screen describes no car at all.
+                var disagreed = Enumerable.Range(1, p.LedNumber).Where(i => byLed[i].Count >= 2 && byLed[i].Max() - byLed[i].Min() > UniformRpm)
+                                          .Select(i => "LED " + i + " " + string.Join("/", byLed[i]));
+                notes.Add("The gears disagree about " + string.Join(", ", disagreed) + ", so each gear kept its own values. " +
+                          "Either this car changes its lights per gear, or a sweep was caught mid-shift; the report's tables show which.");
+            }
+
+            if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
+            {
                 var incomplete = results.Where(r => r.Gear != bestGear && r.Leds.Where((l, i) => !layout.IsGap[i]).Any(l => !Trusted(l)))
                                         .Select(r => r.Gear).ToList();
                 var filled = kept.Concat(incomplete).Distinct().ToList();
@@ -343,6 +367,12 @@ namespace LovelyCarDataCapture.Profile
                     }
                 }
             }
+        }
+
+        private static int Median(List<int> values)
+        {
+            var v = values.OrderBy(x => x).ToList();
+            return v.Count % 2 == 1 ? v[v.Count / 2] : (int)Math.Round((v[v.Count / 2 - 1] + v[v.Count / 2]) / 2.0);
         }
 
         private static void ApplyScreenColors(ScreenLedResult sr, CarProfile p, CarProfile baseline, List<string> notes)

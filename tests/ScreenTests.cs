@@ -347,6 +347,57 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Report.Any(l => l.Contains("couldn't be seen")), "the report says their colour was never visible");
         }
 
+        /// <summary>
+        /// No gear swept right through - one caught the bottom of the strip, another the top, as a track
+        /// with corners in it tends to give. Between them they cover every light and agree where they
+        /// overlap, which is enough to fill the whole file.
+        /// </summary>
+        private static void ScreenPoolsAgreeingGears()
+        {
+            var green = new LedColor(110, 239, 102);
+            var red = new LedColor(247, 52, 41);
+            var cyan = new LedColor(93, 235, 251);
+            var thresholds = new[] { 6000, 6400, 6800, 7200 };
+            const int redline = 7600;
+
+            var session = new CaptureSession("Automobilista2", "Pooled GT3");
+            long time = 0;
+            void Sweep(string gear, int from, int to)
+            {
+                for (int climb = 0; climb < 2; climb++)
+                {
+                    for (int rpm = from; rpm <= to; rpm += 20)
+                    {
+                        var blobs = new List<LitBlob>();
+                        for (int led = 0; led < thresholds.Length; led++)
+                        {
+                            if (rpm <= thresholds[led]) continue;
+                            var color = rpm > redline ? cyan : led < 2 ? green : red;
+                            blobs.Add(new LitBlob { Left = 100 + led * 30 - 9, Right = 100 + led * 30 + 9, Color = color });
+                        }
+                        session.Screen.Record(gear, rpm, time += 16, blobs);
+                    }
+                    for (int rpm = to; rpm >= from; rpm -= 60) session.Screen.Record(gear, rpm, time += 16, new List<LitBlob>());
+                }
+            }
+
+            Sweep("2", 5600, 7000);   // the bottom of the strip, then a corner
+            Sweep("3", 6600, 8000);   // picked up higher, carries on past the redline
+
+            var lookup = new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = "automobilista2/pooled-gt3.json", Text = FourPairJson() };
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), lookup, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, result.Report));
+            var p = result.Profile;
+            var row = p.LedRpm["2"];
+
+            for (int i = 0; i < thresholds.Length; i++)
+                Check(Math.Abs(row[i + 1] - thresholds[i]) <= 40,
+                      "LED " + (i + 1) + " came from whichever gear saw it: " + row[i + 1] + ", expected about " + thresholds[i]);
+            Check(row[0] >= row[4], "the redline is not below the last light");
+            Check(p.GearOrder.All(g => p.LedRpm[g].SequenceEqual(row)), "every gear got the pooled values");
+            Check(result.Report.Any(l => l.Contains("pooled")), "the report says the gears were pooled");
+        }
+
         // ---------- into a car file ----------
         private static void ComposeScreenIntoRepoFile()
         {

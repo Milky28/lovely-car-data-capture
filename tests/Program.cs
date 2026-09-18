@@ -62,6 +62,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen capture reports a two-stage redline", ScreenTwoStageRedline);
             Run("Screen capture drops half-caught gears", ScreenPartialGearsAreNotWrittenDown);
             Run("Screen capture handles a light that comes on at the redline", ScreenLastPairLightsAtTheRedline);
+            Run("Screen capture pools gears that agree", ScreenPoolsAgreeingGears);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);
