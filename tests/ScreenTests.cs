@@ -558,6 +558,35 @@ namespace LovelyCarDataCapture.Tests
             Check(composed.Report.Any(l => l.Contains("the game fades them")), "the report says why the values were corrected");
         }
 
+        private static void ScreenRealLmuSc63()
+        {
+            var session = new CaptureSession("LMU", "Lamborghini Iron Lynx 2024");
+            foreach (var f in LoadFrames(DataPath("lmu-lamborghini-sc63.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+
+            Equal(10, screen.Layout.LedNumber, "slots on the strip, the pale reflection between LED 3 and 4 not among them");
+            Check(screen.Notes.Any(n => n.Contains("lit even at idle")), "the reflection was recognised and dropped");
+            string ColourOf(int led) => screen.ColorGroups.First(g => g.Slots.Contains(led - 1)).Hex;
+            Equal("#FF0000FF", ColourOf(1), "LED 1 is blue, although the strip's colours run blue-red-yellow round the hue circle");
+            Equal("#FFFFFF00", ColourOf(7), "LED 7 is yellow");
+            Equal("#FFFF0000", ColourOf(10), "LED 10 is red");
+            Equal("#FFFF0000", screen.RedlineColor, "the strip turns red at the redline");
+            Check(!screen.SecondStageRpm.HasValue, "red at 359 and at 0 degrees is one stage, not two");
+
+            // The file's redline moves with the gear: 7775 in 1st, 7875 in 2nd, 7925 from 3rd.
+            Check(Math.Abs(screen.RedlineByGear["1"].Rpm - 7775) <= 40, "1st's redline is about 7775, got " + screen.RedlineByGear["1"].Rpm);
+            Check(Math.Abs(screen.RedlineByGear["2"].Rpm - 7875) <= 40, "2nd's redline is about 7875, got " + screen.RedlineByGear["2"].Rpm);
+            Check(Math.Abs(screen.RedlineByGear["4"].Rpm - 7925) <= 40, "4th's redline is about 7925, got " + screen.RedlineByGear["4"].Rpm);
+            Check(screen.FlashOwnMs.HasValue && screen.FlashOwnMs < 150, "the flash between red and the strip's own colours at the limiter was seen");
+
+            var composed = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 17));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
+            var row = composed.Profile.LedRpm["3"];
+            Check(Math.Abs(row[6] - row[8]) <= 10 && Math.Abs(row[9] - row[10]) <= 10, "LEDs 6-8 and 9-10 light as groups: " + string.Join(",", row));
+            Check(row[9] - row[8] > 150, "the red pair comes well after the yellow three");
+            Check(composed.Profile.LedRpm["1"][0] < composed.Profile.LedRpm["3"][0] - 100, "1st keeps its lower redline");
+        }
+
         private static string AccMcLarenJson() => @"{
   ""carName"": ""McLaren 720S GT3 EVO"",
   ""carId"": ""mclaren_720s_gt3_evo"",

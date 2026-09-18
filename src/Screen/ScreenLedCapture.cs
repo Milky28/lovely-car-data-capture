@@ -38,8 +38,23 @@ namespace LovelyCarDataCapture.Screen
         public int? BlinkFromRpm;
         /// <summary>The redline was found from where the blinking starts, the strip keeping its own colours.</summary>
         public bool RedlineFromBlink;
+        /// <summary>Redline measured in each gear on its own, for cars whose redline moves with the gear.</summary>
+        public Dictionary<string, GearRedline> RedlineByGear = new Dictionary<string, GearRedline>();
+        /// <summary>
+        /// Set when the strip flips between its redline colour and its own colours at the limiter
+        /// rather than blinking to dark: how long each own-colour phase lasts, in milliseconds.
+        /// </summary>
+        public int? FlashOwnMs;
+        public int? FlashRedlineMs;
+        public int FlashCount;
         public int Samples;
         public List<string> Notes = new List<string>();
+    }
+
+    /// <summary>Where one gear's strip turned to its redline colour.</summary>
+    internal sealed class GearRedline
+    {
+        public int Rpm, HighestBelow, LowestAbove;
     }
 
     /// <summary>
@@ -67,6 +82,8 @@ namespace LovelyCarDataCapture.Screen
 
         private readonly List<Sample> _samples = new List<Sample>();
         private readonly StripCalibration _calibration = new StripCalibration();
+        /// <summary>Per frame, whether the strip was in its redline state; null where it couldn't be told.</summary>
+        private bool?[] _redline;
 
         public bool HasData => _samples.Count > 0;
         public int SampleCount => _samples.Count;
@@ -114,7 +131,15 @@ namespace LovelyCarDataCapture.Screen
                 return result;
             }
 
-            result.Layout = _calibration.Build(out string problem);
+            // The strip is worked out again once anything that isn't a light has been taken out.
+            var calibration = _calibration;
+            if (DropFixtures(result))
+            {
+                calibration = new StripCalibration();
+                foreach (var s in _samples)
+                    calibration.Add(s.X.Select(x => new LitBlob { Left = (int)Math.Floor(x), Right = (int)Math.Ceiling(x) }).ToList());
+            }
+            result.Layout = calibration.Build(out string problem);
             if (result.Layout == null)
             {
                 result.Notes.Add("The strip couldn't be made out: " + problem + ".");
@@ -169,14 +194,16 @@ namespace LovelyCarDataCapture.Screen
             // its lights (ACC) leaves frames half way through the change - two lights, then seven, then
             // ten - which would read as lights going dark and coming back on at the redline. A little
             // margin keeps the last pair on cars where it lights at the redline itself.
-            double ceiling = result.RedlineRpm.HasValue
+            double overall = result.RedlineRpm.HasValue
                 ? (result.RedlineLowestAbove ?? result.RedlineRpm.Value) + RedlineMarginRpm
                 : double.MaxValue;
+            // A gear with a redline of its own is cut off at that instead.
+            double Ceiling(string gear) => result.RedlineByGear.TryGetValue(gear, out var own) ? own.LowestAbove + RedlineMarginRpm : overall;
             var window = new LedWindowCapture(layout.LedNumber);
             for (int i = 0; i < _samples.Count; i++)
-                if (!blink[i] && _samples[i].Rpm <= ceiling) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
+                if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
-            AverageWithSwitchOff(lit, blink, ceiling, result);
+            AverageWithSwitchOff(lit, blink, Ceiling, result);
 
             ReportSolidRedline(lit, result);
 
@@ -187,11 +214,70 @@ namespace LovelyCarDataCapture.Screen
             return result;
         }
 
+        /// <summary>Below this saturation a blob might be a reflection rather than a light.</summary>
+        private const double PaleSaturation = 0.45;
+
+        /// <summary>How near a pale blob has to be to one seen at idle to count as the same thing.</summary>
+        private const int FixtureReachPx = 15;
+
+        /// <summary>
+        /// Takes out bright pale things that aren't lights. LMU's SC63 has a pale-blue reflection on
+        /// the wheel between two of its lights that just clears the detector's test for colour, and it
+        /// wanders a little as the wheel moves. A saturation cut alone can't be used: a washed-out
+        /// green recorded through a video encoder is barely more saturated. What gives the reflection
+        /// away is that it's there at idle, far below where any light comes on. So pale blobs seen at
+        /// idle mark where the reflection is, and pale blobs there are dropped at every RPM; strongly
+        /// coloured ones are left alone, so a pit limiter's lights at idle stay in.
+        /// </summary>
+        private bool DropFixtures(ScreenLedResult result)
+        {
+            int lowest = _samples.Min(s => s.Rpm), highest = _samples.Max(s => s.Rpm);
+            double idle = lowest + (highest - lowest) * 0.1;
+            int idleFrames = _samples.Count(s => s.Rpm <= idle);
+            var pale = _samples.Where(s => s.Rpm <= idle)
+                               .SelectMany(s => s.X.Where((x, b) => s.Colors[b].Saturation < PaleSaturation))
+                               .ToList();
+            if (pale.Count < Math.Max(5, idleFrames * 0.2)) return false;
+
+            bool Fixture(double x) => pale.Count(p => Math.Abs(p - x) <= FixtureReachPx) >= 5;
+            int dropped = 0;
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                var keep = Enumerable.Range(0, s.X.Length).Where(b => s.Colors[b].Saturation >= PaleSaturation || !Fixture(s.X[b])).ToList();
+                if (keep.Count == s.X.Length) continue;
+                dropped += s.X.Length - keep.Count;
+                s.X = keep.Select(b => s.X[b]).ToArray();
+                s.Colors = keep.Select(b => s.Colors[b]).ToArray();
+                _samples[i] = s;
+            }
+            if (dropped == 0) return false;
+            result.Notes.Add("Something pale and bright in the box was lit even at idle, so it isn't a light - a reflection or a " +
+                             "display. It was ignored (" + dropped + " sightings). A tighter box round the lights avoids it.");
+            return true;
+        }
+
         /// <summary>Hue change that counts as a light no longer showing its own colour.</summary>
         private const double RedlineHueShift = 12.0;
 
         /// <summary>How close together every lit light's hue has to be for the strip to count as one colour.</summary>
         private const double OneColourDegrees = 8.0;
+
+        /// <summary>Average of hues the right way round the circle: 359 and 1 average to 0, not 180.</summary>
+        private static double CircularMean(IEnumerable<double> hues)
+        {
+            double x = 0, y = 0;
+            foreach (var h in hues)
+            {
+                x += Math.Cos(h * Math.PI / 180);
+                y += Math.Sin(h * Math.PI / 180);
+            }
+            double mean = Math.Atan2(y, x) * 180 / Math.PI;
+            return mean < 0 ? mean + 360 : mean;
+        }
+
+        /// <summary>How long the strip has to be clear of its redline state on the near side of a crossing for it to count.</summary>
+        private const int ClearRunMs = 200;
 
         private static double HueDistance(double a, double b)
         {
@@ -265,17 +351,59 @@ namespace LovelyCarDataCapture.Screen
                 redline[i] = (oneColourNow && severalOwnColours && changed > 0) || changed * 2 > known;
             }
 
+            _redline = redline;
+
+            // Only crossings with a clear run on the near side count. Some strips flip between the
+            // redline colour and their own at the limiter (LMU's SC63, every 50 ms or so), and each flip
+            // would otherwise read as the redline being crossed wherever the limiter had the revs.
+            bool Clear(int from, int step)
+            {
+                for (int j = from; j >= 0 && j < _samples.Count; j += step)
+                {
+                    if (_samples[j].Gear != _samples[from].Gear || Math.Abs(_samples[j].TimeMs - _samples[from].TimeMs) > ClearRunMs) break;
+                    if (redline[j] == true) return false;
+                }
+                return true;
+            }
+
             var risingAt = new List<double>();
             var fallingAt = new List<double>();
+            var risingByGear = new Dictionary<string, List<double>>();
+            var fallingByGear = new Dictionary<string, List<double>>();
+            void Add(Dictionary<string, List<double>> byGear, string gear, double rpm)
+            {
+                if (!byGear.TryGetValue(gear, out var list)) byGear[gear] = list = new List<double>();
+                list.Add(rpm);
+            }
             for (int i = 1; i < _samples.Count; i++)
             {
                 if (!redline[i].HasValue || !redline[i - 1].HasValue) continue;
                 if (_samples[i].Gear != _samples[i - 1].Gear) continue;
-                if (redline[i].Value && !redline[i - 1].Value && _samples[i].Rpm > _samples[i - 1].Rpm)
-                    risingAt.Add((_samples[i].Rpm + _samples[i - 1].Rpm) / 2.0);
-                if (!redline[i].Value && redline[i - 1].Value && _samples[i].Rpm < _samples[i - 1].Rpm)
-                    fallingAt.Add((_samples[i].Rpm + _samples[i - 1].Rpm) / 2.0);
+                double at = (_samples[i].Rpm + _samples[i - 1].Rpm) / 2.0;
+                if (redline[i].Value && !redline[i - 1].Value && _samples[i].Rpm > _samples[i - 1].Rpm && Clear(i - 1, -1))
+                {
+                    risingAt.Add(at);
+                    Add(risingByGear, _samples[i].Gear, at);
+                }
+                if (!redline[i].Value && redline[i - 1].Value && _samples[i].Rpm < _samples[i - 1].Rpm && Clear(i, 1))
+                {
+                    fallingAt.Add(at);
+                    Add(fallingByGear, _samples[i].Gear, at);
+                }
             }
+            foreach (var gear in risingByGear.Keys.Union(fallingByGear.Keys))
+            {
+                double? gUp = risingByGear.TryGetValue(gear, out var r) ? Median(r) : (double?)null;
+                double? gDown = fallingByGear.TryGetValue(gear, out var f) ? Median(f) : (double?)null;
+                double g = gUp.HasValue && gDown.HasValue ? (gUp.Value + gDown.Value) / 2 : (gUp ?? gDown.Value);
+                result.RedlineByGear[gear] = new GearRedline
+                {
+                    Rpm = RoundTo(g, 5),
+                    HighestBelow = (int)Math.Round(Math.Min(gUp ?? g, gDown ?? g)),
+                    LowestAbove = (int)Math.Round(Math.Max(gUp ?? g, gDown ?? g)),
+                };
+            }
+            FindFlash(redline, result);
             if (risingAt.Count == 0 && fallingAt.Count == 0)
             {
                 // A strip that blinks has shown where its redline is anyway; saying the limiter was never
@@ -324,7 +452,7 @@ namespace LovelyCarDataCapture.Screen
             var lowest = aboveRedline.OrderBy(i => _samples[i].Rpm).Take(Math.Max(10, aboveRedline.Count / 5)).ToList();
             var firstHues = lowest.SelectMany(i => _samples[i].Colors).Select(c => c.Hue).Where(h => h >= 0).ToList();
             if (firstHues.Count == 0) return;
-            double firstStage = Median(firstHues);
+            double firstStage = CircularMean(firstHues);
 
             var changedAt = new List<double>();
             var changedColors = new List<LedColor>();
@@ -333,12 +461,12 @@ namespace LovelyCarDataCapture.Screen
             {
                 var hues = _samples[i].Colors.Select(c => c.Hue).Where(h => h >= 0).ToList();
                 if (hues.Count < 3) { previous = i; continue; }
-                bool changed = Math.Abs(Median(hues) - firstStage) > RedlineHueShift;
+                bool changed = HueDistance(CircularMean(hues), firstStage) > RedlineHueShift;
                 if (changed)
                 {
                     changedColors.AddRange(_samples[i].Colors.Where(c => c.Hue >= 0));
                     if (previous >= 0 && _samples[previous].Rpm < _samples[i].Rpm &&
-                        Math.Abs(Median(_samples[previous].Colors.Select(c => c.Hue).Where(h => h >= 0).DefaultIfEmpty(firstStage).ToList()) - firstStage) <= RedlineHueShift)
+                        HueDistance(CircularMean(_samples[previous].Colors.Select(c => c.Hue).Where(h => h >= 0).DefaultIfEmpty(firstStage)), firstStage) <= RedlineHueShift)
                         changedAt.Add((_samples[i].Rpm + _samples[previous].Rpm) / 2.0);
                 }
                 previous = i;
@@ -365,7 +493,7 @@ namespace LovelyCarDataCapture.Screen
 
             for (int i = 0; i < _samples.Count; i++)
             {
-                if (_samples[i].Rpm >= ceiling) continue;
+                if (_samples[i].Rpm >= ceiling || (_redline != null && _redline[i] == true)) continue;
                 for (int b = 0; b < _samples[i].X.Length; b++)
                 {
                     int slot = layout.SlotOf(_samples[i].X[b]);
@@ -495,14 +623,14 @@ namespace LovelyCarDataCapture.Screen
         /// amount. The middle of the two is where it really switches, and for an instant game it's no
         /// different from the rising value alone.
         /// </remarks>
-        private void AverageWithSwitchOff(bool[][] lit, bool[] blink, double ceiling, ScreenLedResult result)
+        private void AverageWithSwitchOff(bool[][] lit, bool[] blink, Func<string, double> ceiling, ScreenLedResult result)
         {
             var falls = new Dictionary<string, List<double>[]>();
             for (int i = 1; i < _samples.Count; i++)
             {
                 var a = _samples[i - 1];
                 var b = _samples[i];
-                if (a.Gear != b.Gear || blink[i] || blink[i - 1] || a.Rpm > ceiling || b.Rpm > ceiling || b.Rpm >= a.Rpm) continue;
+                if (a.Gear != b.Gear || blink[i] || blink[i - 1] || a.Rpm > ceiling(a.Gear) || b.Rpm > ceiling(b.Gear) || b.Rpm >= a.Rpm) continue;
                 if (!falls.TryGetValue(b.Gear, out var perSlot))
                 {
                     perSlot = Enumerable.Range(0, result.Layout.LedNumber).Select(_ => new List<double>()).ToArray();
@@ -545,10 +673,48 @@ namespace LovelyCarDataCapture.Screen
                              "doing both, the two were averaged; the rest had the same " + half + " rpm taken off.");
         }
 
+        /// <summary>Longest phase of a flash between the redline colour and the strip's own colours.</summary>
+        private const int MaxFlashPhaseMs = 300;
+
+        /// <summary>
+        /// Finds a strip that flips between its redline colour and its own colours at the limiter,
+        /// instead of blinking to dark. ATSR has no way to show that, so it's only reported.
+        /// </summary>
+        private void FindFlash(bool?[] redline, ScreenLedResult result)
+        {
+            // Runs of the same state in the same gear, frames that couldn't be told skipped.
+            var runs = new List<Tuple<bool, int, string>>();      // state, first frame, gear
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                if (!redline[i].HasValue) continue;
+                var last = runs.Count > 0 ? runs[runs.Count - 1] : null;
+                if (last == null || last.Item1 != redline[i].Value || last.Item3 != _samples[i].Gear)
+                    runs.Add(Tuple.Create(redline[i].Value, i, _samples[i].Gear));
+            }
+            var own = new List<double>();
+            var red = new List<double>();
+            for (int k = 1; k + 1 < runs.Count; k++)
+            {
+                if (runs[k - 1].Item3 != runs[k].Item3 || runs[k + 1].Item3 != runs[k].Item3) continue;
+                double length = _samples[runs[k + 1].Item2].TimeMs - _samples[runs[k].Item2].TimeMs;
+                if (length > MaxFlashPhaseMs) continue;
+                (runs[k].Item1 ? red : own).Add(length);
+            }
+            if (own.Count < 5) return;
+            result.FlashCount = own.Count;
+            result.FlashOwnMs = (int)Math.Round(Median(own));
+            if (red.Count > 0) result.FlashRedlineMs = (int)Math.Round(Median(red));
+            result.Notes.Add("At the limiter the strip flashes between the redline colour and its own colours, about " +
+                             result.FlashOwnMs + " ms in its own colours" +
+                             (result.FlashRedlineMs.HasValue ? " and " + result.FlashRedlineMs + " ms in the redline colour" : "") +
+                             " (" + own.Count + " flashes seen). ATSR can't show that: its strip either stays in the redline " +
+                             "colour or blinks it off, so nothing in the file was changed for it.");
+        }
+
         /// <summary>A strip that stays lit above the redline says so, so a file claiming it blinks can be checked.</summary>
         private void ReportSolidRedline(bool[][] lit, ScreenLedResult result)
         {
-            if (result.BlinkSeen || !result.RedlineRpm.HasValue) return;
+            if (result.BlinkSeen || result.FlashOwnMs.HasValue || !result.RedlineRpm.HasValue) return;
             int above = _samples.Count(s => s.Rpm > result.RedlineRpm.Value);
             if (above > 30)
                 result.Notes.Add("The lights stayed on above the redline in all " + above +

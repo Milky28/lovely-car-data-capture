@@ -55,6 +55,8 @@ namespace LovelyCarDataCapture.Screen
 
         public int Max => Math.Max(R, Math.Max(G, B));
         public int Min => Math.Min(R, Math.Min(G, B));
+        /// <summary>How far from grey, relative to how bright: 0 for grey, 1 for a pure colour.</summary>
+        public double Saturation => Max == 0 ? 0 : (Max - Min) / (double)Max;
 
         /// <summary>Hue in degrees (0 = red, 120 = green), or -1 for a grey pixel.</summary>
         public double Hue

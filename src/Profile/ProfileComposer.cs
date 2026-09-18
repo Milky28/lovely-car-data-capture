@@ -198,6 +198,9 @@ namespace LovelyCarDataCapture.Profile
                 details.Add("  Redline color " + sr.RedlineMeasured + " -> " + (sr.RedlineColor ?? "?") + " from " + sr.RedlineRpm + " rpm" +
                             (sr.RedlineHighestBelow.HasValue && sr.RedlineLowestAbove.HasValue
                                 ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
+            if (sr.RedlineByGear.Count > 1)
+                details.Add("  Redline by gear: " + string.Join(", ", sr.RedlineByGear.OrderBy(g => g.Key, StringComparer.Ordinal)
+                                .Select(g => g.Key + " " + g.Value.Rpm + " (" + g.Value.HighestBelow + "-" + g.Value.LowestAbove + ")")));
             if (sr.SecondStageRpm.HasValue)
                 details.Add("  Second stage " + sr.SecondStageMeasured + " -> " + (sr.SecondStageColor ?? "?") + " from " + sr.SecondStageRpm + " rpm (not in the file)");
             if (sr.BlinkSeen)
@@ -230,13 +233,15 @@ namespace LovelyCarDataCapture.Profile
                               (baseline != null ? "kept the repo values." : "left at 0.") +
                               " Rev up from below them in this gear, smoothly.");
                 int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
-                if (sr.RedlineRpm.HasValue && sr.RedlineRpm.Value >= lastLit) row[0] = sr.RedlineRpm.Value;
-                else if (sr.RedlineRpm.HasValue)
+                // This gear's own redline where it had one: some cars move it with the gear.
+                int? redline = sr.RedlineByGear.TryGetValue(gr.Gear, out var own) ? own.Rpm : sr.RedlineRpm;
+                if (redline.HasValue && redline.Value >= lastLit) row[0] = redline.Value;
+                else if (redline.HasValue)
                 {
                     // Above the redline ATSR shows every light in the redline colour, so a redline below
                     // the last light would leave that light's own colour unreachable.
                     row[0] = lastLit;
-                    notes.Add("Gear " + gr.Gear + ": the colour change measured at " + sr.RedlineRpm +
+                    notes.Add("Gear " + gr.Gear + ": the colour change measured at " + redline +
                               " rpm, below the last light at " + lastLit + " rpm, so the redline was set to the light. " +
                               "The two happen within a few rpm of each other on this car.");
                 }
@@ -320,7 +325,25 @@ namespace LovelyCarDataCapture.Profile
                 int last = measuredLeds.Select(i => pooled[i]).DefaultIfEmpty(0).Max();
                 var redlines = results.Select(r => p.LedRpm[r.Gear][0]).Where(v => v > 0).ToList();
                 pooled[0] = Math.Max(redlines.Count > 0 ? Median(redlines) : pooled[0], last);
-                foreach (var gear in p.GearOrder) p.LedRpm[gear] = (int[])pooled.Clone();
+
+                // The lights can be the same in every gear while the redline isn't: the gears that had
+                // their own redline keep it, and the rest keep what they had.
+                var ownRedlines = results.Where(r => sr.RedlineByGear.ContainsKey(r.Gear))
+                                         .ToDictionary(r => r.Gear, r => p.LedRpm[r.Gear][0]);
+                bool redlinePerGear = ownRedlines.Count >= 2 && ownRedlines.Values.Max() - ownRedlines.Values.Min() > UniformRpm;
+                var before = p.GearOrder.ToDictionary(g => g, g => p.LedRpm[g][0]);
+                foreach (var gear in p.GearOrder)
+                {
+                    p.LedRpm[gear] = (int[])pooled.Clone();
+                    if (!redlinePerGear) continue;
+                    int rl = ownRedlines.TryGetValue(gear, out var measured) ? measured
+                           : baseline != null && before[gear] > 0 ? before[gear] : pooled[0];
+                    p.LedRpm[gear][0] = Math.Max(rl, last);
+                }
+                if (redlinePerGear)
+                    notes.Add("The redline moves with the gear (" + string.Join(", ", ownRedlines.OrderBy(g => g.Key, StringComparer.Ordinal)
+                              .Select(g => g.Key + " " + g.Value)) + "), so each measured gear kept its own" +
+                              (baseline != null ? " and the others kept the repo's." : "; the others use the middle one."));
 
                 notes.Add("Gear " + string.Join(", ", results.Select(r => r.Gear)) + " agree within " + UniformRpm +
                           " rpm wherever they measured the same light, so this car uses the same lights in every gear: " +
@@ -623,8 +646,13 @@ namespace LovelyCarDataCapture.Profile
         /// </summary>
         private const int MaxWindowRpm = 150;
 
-        /// <summary>How far two gears may disagree and still count as the same set of lights, measured twice.</summary>
-        private const int UniformRpm = 60;
+        /// <summary>
+        /// How far two gears may disagree and still count as the same set of lights, measured twice.
+        /// A game that shows its lights a frame late reads each gear late by however far the revs
+        /// climb in a frame, which differs from gear to gear: LMU's SC63 put identical lights 65 rpm
+        /// apart across gears 2 to 4. Cars that really change per gear differ by hundreds.
+        /// </summary>
+        private const int UniformRpm = 80;
 
         /// <summary>
         /// Whether a measurement is tight enough to write into the file. A light that was never seen

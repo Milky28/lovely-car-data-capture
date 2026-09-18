@@ -118,9 +118,15 @@ namespace LovelyCarDataCapture.Screen
                 current.Slots.Add(light.Item1);
                 previous = light.Item2;
             }
+            // Red sits on both ends of the scale: a group just below 360 and one just above 0 are one.
+            if (groups.Count > 1 && lights[0].Item2 + 360 - lights[lights.Count - 1].Item2 <= NeighbourDegrees)
+            {
+                groups[0].Slots.AddRange(groups[groups.Count - 1].Slots);
+                groups.RemoveAt(groups.Count - 1);
+            }
             foreach (var g in groups)
             {
-                g.Hue = g.Slots.Average(s => perSlot[s].Hue);
+                g.Hue = CircularMean(g.Slots.Select(s => perSlot[s].Hue));
                 g.Measured = new LedColor((int)g.Slots.Average(s => perSlot[s].R),
                                           (int)g.Slots.Average(s => perSlot[s].G),
                                           (int)g.Slots.Average(s => perSlot[s].B));
@@ -151,10 +157,24 @@ namespace LovelyCarDataCapture.Screen
             return sorted.Skip(cutAfter + 1).Concat(sorted.Take(cutAfter + 1)).ToList();
         }
 
+        private static double CircularMean(IEnumerable<double> hues)
+        {
+            double x = 0, y = 0;
+            foreach (var h in hues)
+            {
+                x += Math.Cos(h * Math.PI / 180);
+                y += Math.Sin(h * Math.PI / 180);
+            }
+            double mean = Math.Atan2(y, x) * 180 / Math.PI;
+            return mean < 0 ? mean + 360 : mean;
+        }
+
         /// <summary>
         /// Gives each group a different colour from the ladder, in hue order, at the smallest total
-        /// distance. With more groups than the ladder has entries there's nothing to share out, so each
-        /// takes its nearest.
+        /// distance. The ladder is a circle as well, so it's tried from every starting colour: a strip
+        /// of blue, yellow and red (LMU's SC63) runs blue-red-yellow round the circle from where it's
+        /// cut, and read from red first the blue would have to be named red. With more groups than the
+        /// ladder has entries there's nothing to share out, so each takes its nearest.
         /// </summary>
         private static void Name(List<ColorGroup> groups)
         {
@@ -163,6 +183,26 @@ namespace LovelyCarDataCapture.Screen
                 foreach (var g in groups) g.Hex = Classify(g.Measured, out g.Name);
                 return;
             }
+
+            Step[] bestLadder = null;
+            int[] bestPicks = null;
+            double bestCost = double.MaxValue;
+            for (int start = 0; start < Ladder.Length; start++)
+            {
+                var ladder = Ladder.Skip(start).Concat(Ladder.Take(start)).ToArray();
+                double cost = Assign(groups, ladder, out int[] picks);
+                if (cost < bestCost - 1e-9) { bestCost = cost; bestLadder = ladder; bestPicks = picks; }
+            }
+            for (int i = 0; i < groups.Count; i++)
+            {
+                groups[i].Name = bestLadder[bestPicks[i]].Name;
+                groups[i].Hex = bestLadder[bestPicks[i]].Hex;
+            }
+        }
+
+        /// <summary>Cheapest in-order assignment of groups to a ladder; returns its total distance.</summary>
+        private static double Assign(List<ColorGroup> groups, Step[] Ladder, out int[] picks)
+        {
 
             int n = groups.Count, m = Ladder.Length;
             // best[i, j]: cheapest way to name groups i.. using ladder entries j..
@@ -181,14 +221,14 @@ namespace LovelyCarDataCapture.Screen
                 }
             }
 
+            picks = new int[n];
             int at = 0;
             for (int i = 0; i < n; i++)
             {
-                int chosen = pick[i, at];
-                groups[i].Name = Ladder[chosen].Name;
-                groups[i].Hex = Ladder[chosen].Hex;
-                at = chosen + 1;
+                picks[i] = pick[i, at];
+                at = picks[i] + 1;
             }
+            return best[0, 0];
         }
 
         /// <summary>Distance between two hues the short way round the circle.</summary>
