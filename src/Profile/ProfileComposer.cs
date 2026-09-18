@@ -422,7 +422,7 @@ namespace LovelyCarDataCapture.Profile
             {
                 if (layout.IsGap[i] || LedLayout.IsGapColor(p.LedColor[i + 1])) continue;
                 if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
-                if (!SameRgb(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
+                if (!SameColour(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
             }
             // A strip that blinks in its own colours: ATSR paints every light in the redline colour above
             // the redline unless that colour is transparent, which keeps the strip's own.
@@ -433,7 +433,7 @@ namespace LovelyCarDataCapture.Profile
 
             // The redline colour is ledColor[0], and it was never compared: two AMS2 cars turned out to
             // flash cyan where their files say blue, and nothing said so.
-            if (!string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameRgb(p.LedColor[0], sr.RedlineColor))
+            if (!string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameColour(p.LedColor[0], sr.RedlineColor))
                 notes.Add("Above the redline the strip showed " + sr.RedlineMeasured + ", nearest " + sr.RedlineColor +
                           ", where the repo file's redline color is " + p.LedColor[0] + ". It was kept; change it by hand if the game agrees with the screen.");
 
@@ -443,14 +443,31 @@ namespace LovelyCarDataCapture.Profile
         }
 
         /// <summary>Compares two #AARRGGBB or #RRGGBB colors by their RGB part only.</summary>
-        private static bool SameRgb(string a, string b)
+        /// <summary>
+        /// Whether two file colours name the same colour. Exact hex is too strict: a file's dark orange
+        /// #FF8C00 and the capture's orange #FF8000 are the same light, and flagging them buries the
+        /// differences that matter - a red the screen shows as orange - in ones that don't.
+        /// </summary>
+        private static bool SameColour(string a, string b)
         {
-            string Rgb(string c)
+            if (!TryRgb(a, out var x) || !TryRgb(b, out var y)) return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            if (x.Hue < 0 || y.Hue < 0) return x.Hue < 0 && y.Hue < 0;          // both grey or white
+            double d = Math.Abs(x.Hue - y.Hue) % 360;
+            return (d > 180 ? 360 - d : d) <= 12;
+        }
+
+        private static bool TryRgb(string hex, out LedColor colour)
+        {
+            colour = default(LedColor);
+            var c = (hex ?? "").TrimStart('#');
+            if (c.Length == 8) c = c.Substring(2);
+            if (c.Length != 6) return false;
+            try
             {
-                c = (c ?? "").TrimStart('#');
-                return c.Length >= 8 ? c.Substring(2, 6).ToUpperInvariant() : c.ToUpperInvariant();
+                colour = new LedColor(Convert.ToInt32(c.Substring(0, 2), 16), Convert.ToInt32(c.Substring(2, 2), 16), Convert.ToInt32(c.Substring(4, 2), 16));
+                return true;
             }
-            return Rgb(a) == Rgb(b);
+            catch (FormatException) { return false; }
         }
 
         // ---------- manual marks ----------
