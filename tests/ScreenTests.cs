@@ -846,7 +846,7 @@ namespace LovelyCarDataCapture.Tests
                 bool capturing = false;
                 var control = new LovelyCarDataCapture.Plugin.ScreenSettingsControl(
                     settings, () => { }, Describe, (save, test) => { }, () => { }, Console.WriteLine,
-                    () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"),
+                    () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SimHub", "LovelyCarDataCapture"),
                     () => capturing = true, () => capturing = false, () => capturing,
                     () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing",
                     () => new List<AtsrCopy>

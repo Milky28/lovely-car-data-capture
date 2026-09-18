@@ -16,8 +16,8 @@ using SimHub.Plugins;
 namespace LovelyCarDataCapture
 {
     [PluginName("Lovely Car Data Capture")]
-    [PluginAuthor("Lovely Car Data contributors")]
-    [PluginDescription("Records car id, gears and LED RPMs from live telemetry (real rev/shift lights for F1 and iRacing) and exports a Lovely Car Data v2.0.0 car file, starting from the car's current repo file when there is one.")]
+    [PluginAuthor("Milky28")]
+    [PluginDescription("Records a car's rev-light RPMs, colours and redline - read off the screen, or from telemetry in F1 and iRacing - and exports a Lovely Car Data v2.0.0 car file with a report, starting from the car's repo file when there is one. Unofficial community tool.")]
     public class CapturePlugin : IPlugin, IDataPlugin, IWPFSettingsV2
     {
         private const string LogPrefix = "[LovelyCarDataCapture] ";

@@ -4,6 +4,15 @@ Records a car's gears and LED RPMs while you drive and exports a
 [Lovely Car Data](https://github.com/Lovely-Sim-Racing/lovely-car-data) v2.0.0 car file, plus a
 report explaining where every value came from. It never uploads anything.
 
+For games that don't report their rev lights (AMS2, ACC, LMU and others) it reads them off the
+screen: a box over the car's own lights, paired with the RPM from telemetry, gives the RPM each light
+switches on at, its colour, the redline and whether the strip blinks. Tested so far in AMS2, ACC and
+LMU against cars whose files were checked by eye in game.
+
+A community tool, not made by or affiliated with Lovely Sim Racing or ATSR. Files it writes are
+contributed to the Lovely Car Data repo like any other, under that repo's license. The companion
+[RPM LED Builder](https://github.com/Milky28/rpm-led-builder) edits and previews the files it writes.
+
 ## What it captures
 
 | Game | LED data | How |
@@ -62,13 +71,17 @@ is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritte
 
 ## Install
 
-1. Build (below) or take `LovelyCarDataCapture.dll` from `bin/Release/net48/`.
-2. Copy the DLL into the SimHub folder (default `C:\Program Files (x86)\SimHub`) and restart SimHub.
-3. Enable **Lovely Car Data Capture** when SimHub asks.
+1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases),
+   or build it (below).
+2. Close SimHub, copy the DLL into the SimHub folder (default `C:\Program Files (x86)\SimHub`) and
+   start SimHub again. Windows may have marked a downloaded DLL as blocked: if SimHub doesn't list the
+   plugin, open the file's Properties and tick *Unblock*.
+3. Enable **Lovely Car Data Capture** when SimHub asks. Its page is under **Additional plugins** in
+   SimHub's left menu.
 4. Optionally map the actions to buttons in *Controls and events*: `LovelyCarDataCapture.StartCapture`,
-   `StopAndExport`, `ResetCapture`, `ShowCaptureBox`, and for games without LED data `MarkLed`,
-   `MarkRedline`, `UndoMark`. A capture can also be started and stopped from the plugin's own page,
-   which is enough for a game that keeps running while it hasn't got focus.
+   `StopAndExport`, `ResetCapture`, `PickCaptureBox`, `ShowCaptureBox`, and for games without LED data
+   `MarkLed`, `MarkRedline`, `UndoMark`. A capture can also be started and stopped from the plugin's
+   own page, which is enough for a game that keeps running while it hasn't got focus.
 
 ## Use
 
@@ -79,7 +92,8 @@ is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritte
    - iRacing: just engaging each gear is enough.
 3. Trigger **StopAndExport**. Files go to `Documents\SimHub\LovelyCarDataCapture\<sim>\`:
    `<car>.json` and `<car>.report.txt`. (With OneDrive's folder redirection that is under `OneDrive\Documents`.)
-4. Read the report, then open the JSON in the RPM LED Builder (Import JSON) to check it before submitting.
+4. Read the report, then open the JSON in the [RPM LED Builder](https://github.com/Milky28/rpm-led-builder)
+   (Import JSON) to check it before submitting, and try it on the wheel through ATSR (above).
 
 Switching cars during a capture starts a new one and discards the old, so export first.
 
@@ -95,23 +109,17 @@ over directly.
 1. In SimHub's left menu, open **Additional plugins → Lovely Car Data Capture** (SimHub puts every
    plugin's page in that group). That page walks through the whole process, holds the options below,
    and shows where exports are written; tick *Read the rev lights off the screen* to start.
-2. Sit in the car with the lights visible, then press **Position the box…**. An orange frame appears
-   with its controls just below it.
-3. Put the frame around the rev lights, a little outside them. With the game in front it keeps the
-   keyboard, so use the system-wide shortcuts: **Ctrl+Alt+arrows** move the frame, **Ctrl+Alt+Shift+arrows**
-   resize it, **Ctrl+Alt+Enter** finishes. Click the panel first and plain arrows work too, a pixel at a
-   time. The panel shows what the capture sees as you rev, so you can watch the count while adjusting.
-4. The box is **saved as you move it** - the panel says so - and *Undo changes* puts it back where it
-   started. Nothing depends on a keypress reaching the right window.
-5. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
+2. Sit in the car with the lights visible, then press **Pick the lights…**. It counts down five
+   seconds for you to switch to the game, takes a still of the screen, and lets you draw the box round
+   the lights on it with the mouse, a little outside them, showing what it finds inside as you draw.
+   `LovelyCarDataCapture.PickCaptureBox` does the same from a wheel button, taking the still at once.
+3. Capture as usual. Rev slowly from idle to the limiter a few times, holding the limiter a moment.
 
-The box can also be opened from a wheel button: map `LovelyCarDataCapture.ShowCaptureBox`.
-
-**Some games, ACC among them, keep the keyboard and the pointer even from the frame above.** For those,
-use **Pick the lights…** instead: it counts down five seconds for you to switch to the game, takes a still
-of the screen, and lets you draw the box round the lights on it with the mouse, showing how many lit
-lights it finds inside as you draw. `LovelyCarDataCapture.PickCaptureBox` does the same from a wheel
-button, taking the still at once.
+**Adjust live…** puts a frame over the running game instead, reading the lights as you rev. With the
+game in front it keeps the keyboard, so it uses system-wide shortcuts: **Ctrl+Alt+arrows** move the
+frame, **Ctrl+Alt+Shift+arrows** resize it, **Ctrl+Alt+Enter** finishes. The box is saved as you move
+it and *Undo changes* puts it back. Some games, ACC among them, keep even those keys and the pointer to
+themselves; use the still there. `LovelyCarDataCapture.ShowCaptureBox` opens the frame from a button.
 
 **A game in borderless mode hides the mouse pointer and takes the keyboard while it has focus.** That's
 why the frame has system-wide shortcuts and saves itself as it moves, and why its reading stays live
@@ -127,8 +135,15 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   climbs, so one bad frame doesn't move it. A light only ever seen already lit, or pinned down no
   better than 150 rpm, is reported instead of written: braking mid-sweep costs you that gear, not the
   capture.
-- **Whether the car uses one set of lights for every gear.** Two gears measured right through that
-  agree are taken as evidence it does, and the gears a track gives no room to sweep follow them.
+- **Whether the car uses one set of lights for every gear.** Gears that agree within 80 rpm wherever
+  they measured the same light are pooled, and the gears a track gives no room to sweep follow them. A
+  single gear far from the rest (neutral and first climb fastest, so measure worst) is left out and
+  named. The redline is measured per gear, since some cars move it with the gear.
+- **How far behind the revs the game draws its lights**, in milliseconds: the delay that makes each
+  light's switching on (rising revs) and off (falling revs) agree. Every frame is read against the revs
+  that long before it, which cancels a game's fade (ACC) as well as its render lag.
+- **What isn't a rev light**: a pale reflection lit even at idle, and indicators using some of the
+  lights - ACC's traction control (blue) and ABS (yellow) - are recognised and left out.
 - **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
   washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
 - **Where the strip turns to its redline colour, and whether it blinks there.** A blink is recognised
@@ -137,10 +152,12 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   the lights switching on at once. A strip that blinks without changing colour gets its redline from
   where the blinking starts. A car that changes
   colour a second time near the limiter gets that reported too: a car file holds one redline, so only
-  the first is written, and ATSR adds a second stage itself for some cars.
+  the first is written, and ATSR adds a second stage itself for some cars. So does a strip that flashes
+  between its redline colour and its own (LMU's SC63), which ATSR can't show.
 
-Each light's own colour is learned while the strip is only partly lit, because it can't be in its
-redline state then. That's also why sweeps have to start below the first light.
+Each light's own colour is the one it shows most while lit, leaving out moments when the whole strip is
+one colour (the redline, a blink, a fade). Sweeps have to start below the first light, so each light is
+seen switching on.
 
 **What it needs:**
 
@@ -215,7 +232,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's local RPM folder and have ATSR reload. |
 | `AtsrCopies` | `[]` | The plugin's own copies in that folder, kept so they can be listed and removed. |
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
-| `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
+| `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Pick the lights…* or *Adjust live…*. |
 | `ScreenCaptureFps` | `30` | Frames read per second, 30 or 60. Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames to time, or one that revs very quickly; it roughly doubles the CPU a capture uses. Also on the plugin's page. |
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
@@ -250,5 +267,11 @@ Test runner options:
 - `src/Profile` – car file model, LED layouts, and merging captures into a file
 - `src/Repo` – read-only GitHub lookup
 - `src/Plugin` – SimHub plugin, raw telemetry readers, screen grabbing and the capture box window
-- `tests` – console test runner, with a real recording in `tests/data`
-- `tools/offline` – turns a screen recording into that test data
+- `tests` – console test runner. `tests/data` holds real captures from AMS2, ACC and LMU, each checked
+  against the car in game, which the tests replay
+- `tools/offline` – turns a screen recording into test data
+
+## License
+
+MIT, see [LICENSE](LICENSE). Car files the plugin writes are data for the Lovely Car Data repo and
+fall under its license when contributed.
