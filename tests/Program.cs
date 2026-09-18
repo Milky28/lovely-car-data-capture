@@ -26,6 +26,7 @@ namespace LovelyCarDataCapture.Tests
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--box") { ShowCaptureBox(args[i + 1]); return 0; }
+                if (args[i] == "--still") { ShowStillPicker(args[i + 1]); return 0; }
                 if (args[i] != "--grab") continue;
                 GrabFromScreen(args[i + 1]);
                 return 0;

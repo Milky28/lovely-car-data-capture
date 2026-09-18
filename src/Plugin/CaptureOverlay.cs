@@ -46,6 +46,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly DispatcherTimer _timer;
         private DateTime _messageUntil = DateTime.MinValue;
         private bool _capturing;
+        private bool _suppressed;
 
         public CaptureOverlay(Func<string> status, Action<int, int> moved, int x, int y)
         {
@@ -140,6 +141,13 @@ namespace LovelyCarDataCapture.Plugin
             Refresh();
         }
 
+        /// <summary>Keeps the panel out of sight, for a still of the screen it would otherwise be in.</summary>
+        public void SetSuppressed(bool suppressed)
+        {
+            _suppressed = suppressed;
+            Refresh();
+        }
+
         private void Refresh()
         {
             if (DateTime.UtcNow > _messageUntil && _messageText.Visibility == Visibility.Visible)
@@ -147,7 +155,7 @@ namespace LovelyCarDataCapture.Plugin
 
             _statusText.Text = _status();
             // Out of the way when there's nothing to say: not capturing and the last message has gone.
-            bool wanted = _capturing || _messageText.Visibility == Visibility.Visible;
+            bool wanted = !_suppressed && (_capturing || _messageText.Visibility == Visibility.Visible);
             if (wanted && Visibility != Visibility.Visible) Show();
             else if (!wanted && Visibility == Visibility.Visible) Hide();
         }

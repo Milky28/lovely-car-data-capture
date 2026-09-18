@@ -99,6 +99,12 @@ over directly.
 
 The box can also be opened from a wheel button: map `LovelyCarDataCapture.ShowCaptureBox`.
 
+**Some games, ACC among them, keep the keyboard and the pointer even from the frame above.** For those,
+use **Pick the lights…** instead: it counts down five seconds for you to switch to the game, takes a still
+of the screen, and lets you draw the box round the lights on it with the mouse, showing how many lit
+lights it finds inside as you draw. `LovelyCarDataCapture.PickCaptureBox` does the same from a wheel
+button, taking the still at once.
+
 **A game in borderless mode hides the mouse pointer and takes the keyboard while it has focus.** That's
 why the frame has system-wide shortcuts and saves itself as it moves, and why its reading stays live
 while the game is in front: the border sits just outside the region being read, so nothing has to be

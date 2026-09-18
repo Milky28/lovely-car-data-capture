@@ -81,6 +81,8 @@ namespace LovelyCarDataCapture
             this.AddAction(actionName: "UndoMark", actionStart: (pm, _) => UndoMark());
             // Games that don't report their lights: put the box over them, then capture as usual.
             this.AddAction(actionName: "ShowCaptureBox", actionStart: (pm, _) => ShowCaptureBox());
+            // Pressed in the car: the game is on screen right then, so the still is taken at once.
+            this.AddAction(actionName: "PickCaptureBox", actionStart: (pm, _) => OnUiThread(() => PickFromStill(0)));
         }
 
         private void Mark(bool redline)
@@ -332,6 +334,49 @@ namespace LovelyCarDataCapture
             if (_capturing && Settings.ScreenCapture) StartScreenCapture();
         }
 
+        /// <summary>
+        /// Takes a still of the screen and lets the box be drawn on it. From SimHub's page the game is
+        /// behind SimHub, so there's a countdown to switch to it first, shown on the panel over the game;
+        /// the panel steps aside for the still itself so it can't end up covering the lights.
+        /// </summary>
+        private void PickFromStill(int countdown)
+        {
+            _box?.Close();
+            EnsureOverlay();
+            int left = countdown;
+            void Tick()
+            {
+                if (left > 0)
+                {
+                    _overlay?.Message("Switch to the game with the rev lights in view. Taking a still in " + left + "…");
+                    left--;
+                    var wait = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    wait.Tick += (s, e) => { wait.Stop(); Tick(); };
+                    wait.Start();
+                    return;
+                }
+
+                _overlay?.SetSuppressed(true);
+                // One render pass for the panel to actually leave the screen before it's copied.
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    DesktopSnapshot shot;
+                    try { shot = DesktopSnapshot.Take(); }
+                    catch (Exception ex)
+                    {
+                        _overlay?.SetSuppressed(false);
+                        Say("Couldn't take a still of the screen: " + ex.Message);
+                        return;
+                    }
+                    _overlay?.SetSuppressed(false);
+                    var picker = new SnapshotPickerWindow(shot, SettingsBox(), region => SaveCaptureBox(region, final: true));
+                    picker.Show();
+                    picker.Activate();
+                }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+            }
+            Tick();
+        }
+
         /// <summary>Shows the capture box, or brings the one already open back to the front.</summary>
         private void ShowCaptureBoxFor(Action<PixelRect> onSave, Func<PixelRect, string> test)
         {
@@ -360,7 +405,7 @@ namespace LovelyCarDataCapture
         // ---------- SimHub's settings page ----------
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager) =>
             new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
-                                      region => _screen.Describe(region), ShowCaptureBoxFor, Say, OutputFolder,
+                                      region => _screen.Describe(region), ShowCaptureBoxFor, () => PickFromStill(5), Say, OutputFolder,
                                       StartCapture,
                                       // Exporting waits on GitHub, so it can't run on the thread drawing this page.
                                       () => Task.Run(() => StopAndExport()),

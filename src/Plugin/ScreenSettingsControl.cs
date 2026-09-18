@@ -26,6 +26,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Action _save;
         private readonly Func<PixelRect, string> _test;
         private readonly Action<Action<PixelRect>, Func<PixelRect, string>> _showBox;
+        private readonly Action _pickFromStill;
         private readonly Action<string> _say;
         private readonly Func<bool> _capturing;
         private readonly Func<string> _statusText;
@@ -38,7 +39,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Button _stop;
 
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
-                                     Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action<string> say,
+                                     Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action pickFromStill, Action<string> say,
                                      Func<string> outputFolder, Action start, Action stop, Func<bool> capturing,
                                      Func<string> status)
         {
@@ -46,6 +47,7 @@ namespace LovelyCarDataCapture.Plugin
             _save = save;
             _test = test;
             _showBox = showBox;
+            _pickFromStill = pickFromStill;
             _say = say;
             _capturing = capturing;
             _statusText = status;
@@ -68,7 +70,27 @@ namespace LovelyCarDataCapture.Plugin
             });
 
             // ---- what you actually press ----
-            var box = new Button { Content = "Position the box…", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 8, 0) };
+            var still = new Button
+            {
+                Content = "Pick the lights…",
+                Padding = new Thickness(14, 6, 14, 6),
+                Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "Counts down five seconds for you to switch to the game, takes a still of the screen, and lets you " +
+                          "draw the box round the lights with the mouse. Works in every game, including ones that keep the keyboard.",
+            };
+            still.Click += (s, e) =>
+            {
+                _pickFromStill();
+                _result.Text = "Switch to the game now: a still is taken in five seconds.";
+            };
+            var box = new Button
+            {
+                Content = "Adjust live…",
+                Padding = new Thickness(14, 6, 14, 6),
+                Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "A frame over the running game that shows what it reads as you rev. Moved with Ctrl+Alt+arrows, " +
+                          "which some games, ACC among them, don't let through.",
+            };
             box.Click += (s, e) => _showBox(Saved, _test);
             var testNow = new Button { Content = "Test", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 8, 0) };
             testNow.Click += (s, e) =>
@@ -82,6 +104,7 @@ namespace LovelyCarDataCapture.Plugin
             _stop.Click += (s, e) => { stop(); Tick(); };
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+            buttons.Children.Add(still);
             buttons.Children.Add(box);
             buttons.Children.Add(testNow);
             buttons.Children.Add(_start);
@@ -113,8 +136,8 @@ namespace LovelyCarDataCapture.Plugin
             panel.Children.Add(Section("Before the first capture", true,
                 Bullet("The game must run borderless or windowed. Nothing outside it can read the screen in exclusive fullscreen."),
                 Bullet("The cockpit camera has to stay still: turn off head movement, camera shake and motion blur, and leave seat position and field of view alone once the box is placed."),
-                Bullet("Sit in the car with the lights in view before pressing Position the box, and frame them with a little room to spare."),
-                Bullet("The game keeps the keyboard while it's in front, so move the frame with Ctrl+Alt+arrows, resize it with Ctrl+Alt+Shift+arrows, and finish with Ctrl+Alt+Enter. It saves as you go and shows what it can see while you rev.")));
+                Bullet("Sit in the car with the lights in view, press Pick the lights, and switch to the game before the countdown ends. Then draw a box round the lights on the still, with a little room to spare. The PickCaptureBox button does the same from the car, straight away."),
+                Bullet("Adjust live puts a frame over the running game instead, reading the lights as you rev. Move it with Ctrl+Alt+arrows, resize it with Ctrl+Alt+Shift+arrows, finish with Ctrl+Alt+Enter. Some games, ACC among them, keep those keys to themselves; use the still there.")));
 
             panel.Children.Add(Section("Driving a capture worth having", false,
                 Bullet("Rev from below the first light right up to the limiter, smoothly and slowly, and hold the limiter a second or two so the redline is seen."),
@@ -136,7 +159,8 @@ namespace LovelyCarDataCapture.Plugin
 
             panel.Children.Add(Section("Buttons you can map", false,
                 Paragraph("All of this works from here, so mapping is only needed for a game that stops running when it loses focus. In SimHub's Controls and events:"),
-                Bullet("StartCapture, StopAndExport, ShowCaptureBox to place the frame, and ResetCapture to throw away what's been recorded."),
+                Bullet("StartCapture, StopAndExport, and ResetCapture to throw away what's been recorded."),
+                Bullet("PickCaptureBox takes a still there and then for drawing the box; ShowCaptureBox opens the live frame."),
                 Bullet("MarkLed, MarkRedline and UndoMark, for games whose lights can't be read on screen: pressed by hand as each light comes on.")));
 
             // ---- options ----

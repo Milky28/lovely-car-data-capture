@@ -697,7 +697,7 @@ namespace LovelyCarDataCapture.Tests
                 };
                 bool capturing = false;
                 var control = new LovelyCarDataCapture.Plugin.ScreenSettingsControl(
-                    settings, () => { }, Describe, (save, test) => { }, Console.WriteLine,
+                    settings, () => { }, Describe, (save, test) => { }, () => { }, Console.WriteLine,
                     () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"),
                     () => capturing = true, () => capturing = false, () => capturing,
                     () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing");
@@ -714,6 +714,25 @@ namespace LovelyCarDataCapture.Tests
                     Foreground = System.Windows.Media.Brushes.White,
                     Content = control,
                 }.Show();
+                app.Run();
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+
+        /// <summary>Opens the still picker on its own (--still x,y,w,h starts it on that box), to try it outside SimHub.</summary>
+        private static void ShowStillPicker(string spec)
+        {
+            var parts = spec.Split(',');
+            var start = new PixelRect(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
+            var thread = new System.Threading.Thread(() =>
+            {
+                var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnLastWindowClose };
+                var shot = LovelyCarDataCapture.Plugin.DesktopSnapshot.Take();
+                Console.WriteLine("Still: " + shot.Frame.Width + "x" + shot.Frame.Height + " at " + shot.Left + "," + shot.Top);
+                new LovelyCarDataCapture.Plugin.SnapshotPickerWindow(shot, start,
+                    region => Console.WriteLine("Kept: " + region.X + "," + region.Y + "," + region.Width + "," + region.Height)).Show();
                 app.Run();
             });
             thread.SetApartmentState(System.Threading.ApartmentState.STA);
