@@ -555,7 +555,7 @@ namespace LovelyCarDataCapture.Tests
             }
             Check(Math.Abs(offsets.Average()) <= 20, "no fade lag left over: the values sit " +
                   offsets.Average().ToString("0", CultureInfo.InvariantCulture) + " rpm from the file on average");
-            Check(composed.Report.Any(l => l.Contains("the game fades them")), "the report says why the values were corrected");
+            Check(composed.Report.Any(l => l.Contains("ms after its revs")), "the report says why the values were corrected");
         }
 
         private static void ScreenRealLmuSc63()
@@ -584,6 +584,11 @@ namespace LovelyCarDataCapture.Tests
             var row = composed.Profile.LedRpm["3"];
             Check(Math.Abs(row[6] - row[8]) <= 10 && Math.Abs(row[9] - row[10]) <= 10, "LEDs 6-8 and 9-10 light as groups: " + string.Join(",", row));
             Check(row[9] - row[8] > 150, "the red pair comes well after the yellow three");
+            // The file's values, one per group of lights: read in milliseconds of display lag, every gear lands on them.
+            var file = new[] { 6130, 6380, 6635, 6900, 7155, 7400, 7400, 7400, 7675, 7675 };
+            for (int i = 0; i < 10; i++)
+                Check(Math.Abs(row[i + 1] - file[i]) <= 25, "LED " + (i + 1) + " is about " + file[i] + ", got " + row[i + 1]);
+            Check(screen.DisplayLagMs > 5 && screen.DisplayLagMs < 60, "LMU draws its lights a frame or so late: " + screen.DisplayLagMs + " ms");
             Check(composed.Profile.LedRpm["1"][0] < composed.Profile.LedRpm["3"][0] - 100, "1st keeps its lower redline");
         }
 

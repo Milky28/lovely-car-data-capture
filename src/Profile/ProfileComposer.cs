@@ -314,6 +314,24 @@ namespace LovelyCarDataCapture.Profile
                 for (int i = 0; i < gr.Leds.Length; i++)
                     if (!layout.IsGap[i] && Trusted(gr.Leds[i])) byLed[i + 1].Add(gr.Leds[i].Rpm);
 
+            // One gear alone out of line with the rest is a bad reading rather than a different car: in
+            // neutral and first the revs climb so fast that a few milliseconds of display lag misjudged
+            // is a hundred rpm. With three or more gears measuring a light, a minority far from the
+            // middle of the others is left out; a car that really changes per gear disagrees everywhere.
+            var outliers = new List<string>();
+            for (int led = 1; led <= p.LedNumber; led++)
+            {
+                var values = byLed[led];
+                if (values.Count < 3) continue;
+                int middle = Median(values);
+                var far = values.Where(v => Math.Abs(v - middle) > UniformRpm).ToList();
+                if (far.Count == 0 || far.Count * 2 >= values.Count) continue;
+                var gearsFar = results.Where(r => !layout.IsGap[led - 1] && Trusted(r.Leds[led - 1]) && far.Contains(r.Leds[led - 1].Rpm))
+                                      .Select(r => r.Gear);
+                outliers.Add("LED " + led + " in gear " + string.Join("/", gearsFar) + " (" + string.Join("/", far) + " against " + middle + ")");
+                values.RemoveAll(v => far.Contains(v));
+            }
+
             bool measuredTwice = byLed.Any(v => v.Count >= 2);
             bool agree = byLed.All(v => v.Count == 0 || v.Max() - v.Min() <= UniformRpm);
             var measuredLeds = Enumerable.Range(1, p.LedNumber).Where(i => byLed[i].Count > 0).ToList();
@@ -345,6 +363,9 @@ namespace LovelyCarDataCapture.Profile
                               .Select(g => g.Key + " " + g.Value)) + "), so each measured gear kept its own" +
                               (baseline != null ? " and the others kept the repo's." : "; the others use the middle one."));
 
+                if (outliers.Count > 0)
+                    notes.Add("Left out of the pooling as far from the other gears: " + string.Join(", ", outliers) +
+                              ". The revs climb fastest in the low gears, so those are measured least precisely.");
                 notes.Add("Gear " + string.Join(", ", results.Select(r => r.Gear)) + " agree within " + UniformRpm +
                           " rpm wherever they measured the same light, so this car uses the same lights in every gear: " +
                           "they were pooled and used for all of them. If this car really does differ per gear, sweep each " +

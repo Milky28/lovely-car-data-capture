@@ -40,6 +40,8 @@ namespace LovelyCarDataCapture.Screen
         public bool RedlineFromBlink;
         /// <summary>Redline measured in each gear on its own, for cars whose redline moves with the gear.</summary>
         public Dictionary<string, GearRedline> RedlineByGear = new Dictionary<string, GearRedline>();
+        /// <summary>How far behind the revs the game draws its lights, in milliseconds; 0 when it isn't.</summary>
+        public int DisplayLagMs;
         /// <summary>
         /// Set when the strip flips between its redline colour and its own colours at the limiter
         /// rather than blinking to dark: how long each own-colour phase lasts, in milliseconds.
@@ -80,21 +82,26 @@ namespace LovelyCarDataCapture.Screen
             public LedColor[] Colors;
         }
 
-        private readonly List<Sample> _samples = new List<Sample>();
+        private readonly List<Sample> _recorded = new List<Sample>();
+        /// <summary>
+        /// The frames <see cref="Result"/> is working on: a copy of the recording with anything that
+        /// isn't a light taken out and each RPM moved back by the game's display lag.
+        /// </summary>
+        private List<Sample> _samples = new List<Sample>();
         private readonly StripCalibration _calibration = new StripCalibration();
         /// <summary>Per frame, whether the strip was in its redline state; null where it couldn't be told.</summary>
         private bool?[] _redline;
 
-        public bool HasData => _samples.Count > 0;
-        public int SampleCount => _samples.Count;
+        public bool HasData => _recorded.Count > 0;
+        public int SampleCount => _recorded.Count;
         public int MostLightsSeen => _calibration.MostLightsInOneFrame;
 
         public void Record(string gear, int rpm, long timeMs, IReadOnlyList<LitBlob> blobs)
         {
             if (string.IsNullOrEmpty(gear) || rpm <= 0 || blobs == null) return;
-            if (_samples.Count >= MaxSamples) return;
+            if (_recorded.Count >= MaxSamples) return;
             _calibration.Add((IReadOnlyCollection<LitBlob>)blobs);
-            _samples.Add(new Sample
+            _recorded.Add(new Sample
             {
                 Gear = gear,
                 Rpm = rpm,
@@ -112,9 +119,9 @@ namespace LovelyCarDataCapture.Screen
         public void WriteFrames(TextWriter writer)
         {
             writer.WriteLine("frame,timeMs,gear,rpm,blobs");
-            for (int i = 0; i < _samples.Count; i++)
+            for (int i = 0; i < _recorded.Count; i++)
             {
-                var s = _samples[i];
+                var s = _recorded[i];
                 var blobs = string.Join(" ", s.X.Select((x, b) => ((int)Math.Round(x)).ToString(CultureInfo.InvariantCulture) + ":" +
                                                                   s.Colors[b].R + ":" + s.Colors[b].G + ":" + s.Colors[b].B));
                 writer.WriteLine(string.Join(",", i.ToString(CultureInfo.InvariantCulture), s.TimeMs.ToString(CultureInfo.InvariantCulture),
@@ -124,6 +131,7 @@ namespace LovelyCarDataCapture.Screen
 
         public ScreenLedResult Result()
         {
+            _samples = new List<Sample>(_recorded);
             var result = new ScreenLedResult { Samples = _samples.Count };
             if (_samples.Count == 0)
             {
@@ -174,7 +182,12 @@ namespace LovelyCarDataCapture.Screen
             // Blinks first: a blink's dark phase looks exactly like every light switching off, and its
             // next lit phase like every light switching on, so left in they swamp the real thresholds -
             // holding the limiter, as a capture should, gives dozens of them.
-            var blink = FindBlinks(lit, layout, result);
+            var blink = FindBlinks(lit, layout, new ScreenLedResult());
+
+            // Then the lag, so everything after reads each frame against the revs it was showing. The
+            // blinks are found again on the moved RPMs: where the blinking starts is one of them.
+            RemoveDisplayLag(lit, blink, result);
+            blink = FindBlinks(lit, layout, result);
 
             FindRedline(lit, hues, result);
             if (!result.RedlineRpm.HasValue && result.BlinkFromRpm.HasValue)
@@ -204,6 +217,7 @@ namespace LovelyCarDataCapture.Screen
                 if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
             AverageWithSwitchOff(lit, blink, Ceiling, result);
+            result.Notes.AddRange(_lagNotes);
 
             ReportSolidRedline(lit, result);
 
@@ -652,25 +666,113 @@ namespace LovelyCarDataCapture.Screen
                     double lag = rise.Rpm - fall;
                     if (lag < 0 || lag > MaxLagRpm) continue;      // a stray reading, not the same edge seen twice
                     gear.Leds[s] = rise.WithFall(RoundTo((rise.Rpm + fall) / 2, 5), (int)Math.Round(fall));
-                    gaps.Add((int)Math.Round(lag));
                 }
             }
-            if (gaps.Count < MinFalls || gaps.Average() <= 20) return;
+        }
 
-            // The fade is the game's, not one light's: the same delay applies to lights that never had
-            // enough switch-offs of their own, and leaving them late would mix late and corrected values
-            // when the gears are pooled.
-            int half = (int)Math.Round(Median(gaps.Select(g => (double)g).ToList()) / 2);
-            foreach (var gear in result.Gears)
-                for (int s = 0; s < gear.Leds.Length; s++)
+        /// <summary>Longest display lag looked for, in milliseconds.</summary>
+        private const int MaxLagMs = 150;
+
+        private readonly List<string> _lagNotes = new List<string>();
+
+        /// <summary>
+        /// Moves every frame's RPM back to what the revs were when the screen was drawn.
+        /// </summary>
+        /// <remarks>
+        /// The screen shows the lights a little after the telemetry has moved on: the game renders a
+        /// frame or so behind, and a game that fades its lights in (ACC) is seen later still. A fixed
+        /// delay costs a different number of rpm in every gear - in first the revs climb several times
+        /// faster than in fourth - so it's measured in time. With the right delay, where a light is seen
+        /// switching on as the revs rise and off as they fall agree; with too little, on reads high and
+        /// off reads low. So the delay is the one that makes them agree, found by trying them.
+        /// </remarks>
+        private void RemoveDisplayLag(bool[][] lit, bool[] blink, ScreenLedResult result)
+        {
+            _lagNotes.Clear();
+            int best = 0, lights = 0;
+            double bestGap = double.MaxValue, noLagGap = 0;
+            for (int lag = 0; lag <= MaxLagMs; lag += 2)
+            {
+                var rpm = Shifted(lag);
+                var gaps = SwitchGaps(lit, blink, rpm);
+                if (gaps.Count < MinFalls) { if (lag == 0) return; continue; }   // too few lights seen both ways to tell
+                double gap = Math.Abs(Median(gaps));
+                if (lag == 0) noLagGap = Median(gaps);
+                if (gap < bestGap - 0.5) { bestGap = gap; best = lag; lights = gaps.Count; }
+            }
+            if (best == 0) return;
+
+            var moved = Shifted(best);
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                s.Rpm = (int)Math.Round(moved[i]);
+                _samples[i] = s;
+            }
+            result.DisplayLagMs = best;
+            _lagNotes.Add("The game shows its lights about " + best + " ms after its revs, so every light read about " +
+                          (int)Math.Round(noLagGap / 2) + " rpm high switching on and as much low switching off. Each frame " +
+                          "was read against the revs " + best + " ms earlier, which brings the two within " +
+                          (int)Math.Round(bestGap) + " rpm (" + lights + " lights seen both ways).");
+        }
+
+        /// <summary>Each frame's RPM as it was <paramref name="lagMs"/> earlier, within the same gear.</summary>
+        private double[] Shifted(int lagMs)
+        {
+            var rpm = new double[_samples.Count];
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                double when = _samples[i].TimeMs - lagMs;
+                int j = i;
+                while (j > 0 && _samples[j - 1].Gear == _samples[i].Gear && _samples[j].TimeMs > when) j--;
+                if (_samples[j].TimeMs >= when || j == i) { rpm[i] = _samples[j].Rpm; continue; }
+                // Between frame j and j+1.
+                var a = _samples[j];
+                var b = _samples[j + 1];
+                double f = b.TimeMs == a.TimeMs ? 0 : (when - a.TimeMs) / (double)(b.TimeMs - a.TimeMs);
+                rpm[i] = a.Rpm + (b.Rpm - a.Rpm) * f;
+            }
+            return rpm;
+        }
+
+        /// <summary>
+        /// For every light seen switching both ways in a gear, how much higher it switched on than off,
+        /// against the given RPMs.
+        /// </summary>
+        private List<double> SwitchGaps(bool[][] lit, bool[] blink, double[] rpm)
+        {
+            var rises = new Dictionary<string, List<double>>();
+            var falls = new Dictionary<string, List<double>>();
+            int slots = lit.Length > 0 ? lit[0].Length : 0;
+            for (int i = 1; i < _samples.Count; i++)
+            {
+                if (_samples[i].Gear != _samples[i - 1].Gear || blink[i] || blink[i - 1]) continue;
+                // Only ordinary frames: a whole strip changing at once is a blink, a flash or the limiter.
+                int before = lit[i - 1].Count(v => v), after = lit[i].Count(v => v);
+                if (Math.Abs(after - before) > 3) continue;
+                bool rising = rpm[i] > rpm[i - 1], falling = rpm[i] < rpm[i - 1];
+                double at = (rpm[i] + rpm[i - 1]) / 2;
+                for (int s = 0; s < slots; s++)
                 {
-                    var led = gear.Leds[s];
-                    if (led == null || led.FallRpm.HasValue) continue;
-                    gear.Leds[s] = led.WithLagTaken(RoundTo(led.Rpm - half, 5), half);
+                    string key = _samples[i].Gear + "|" + s;
+                    if (rising && !lit[i - 1][s] && lit[i][s]) Add(rises, key, at);
+                    if (falling && lit[i - 1][s] && !lit[i][s]) Add(falls, key, at);
                 }
-            result.Notes.Add("The lights switched on about " + half + " rpm later and off about as much earlier than they " +
-                             "really do - the game fades them, so each is seen a frame or so late. Where a light was seen " +
-                             "doing both, the two were averaged; the rest had the same " + half + " rpm taken off.");
+            }
+            var gaps = new List<double>();
+            foreach (var key in rises.Keys)
+            {
+                if (!falls.TryGetValue(key, out var down) || down.Count < 2 || rises[key].Count < 2) continue;
+                double gap = Median(rises[key]) - Median(down);
+                if (Math.Abs(gap) <= MaxLagRpm * 2) gaps.Add(gap);    // further apart is two different things
+            }
+            return gaps;
+
+            void Add(Dictionary<string, List<double>> into, string key, double value)
+            {
+                if (!into.TryGetValue(key, out var list)) into[key] = list = new List<double>();
+                list.Add(value);
+            }
         }
 
         /// <summary>Longest phase of a flash between the redline colour and the strip's own colours.</summary>
