@@ -76,5 +76,7 @@ namespace LovelyCarDataCapture
         /// so it can be tried on real hardware before submitting.
         /// </summary>
         public bool CopyToAtsrDeveloperFolder { get; set; }
+        /// <summary>The copies this plugin has put in that folder, so they can be listed and taken out again.</summary>
+        public System.Collections.Generic.List<AtsrCopy> AtsrCopies { get; set; } = new System.Collections.Generic.List<AtsrCopy>();
     }
 }

@@ -814,7 +814,13 @@ namespace LovelyCarDataCapture.Tests
                     settings, () => { }, Describe, (save, test) => { }, () => { }, Console.WriteLine,
                     () => "C:" + Path.DirectorySeparatorChar + Path.Combine("Users", "jerky", "OneDrive", "Documents", "SimHub", "LovelyCarDataCapture"),
                     () => capturing = true, () => capturing = false, () => capturing,
-                    () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing");
+                    () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing",
+                    () => new List<AtsrCopy>
+                    {
+                        new AtsrCopy { File = "ginetta-g55-gt4.json", Game = "AssettoCorsaCompetizione", Written = new DateTime(2026, 9, 18, 8, 36, 0) },
+                        new AtsrCopy { File = "lamborghini-iron-lynx-2024.json", Game = "LMU", Written = new DateTime(2026, 9, 17, 23, 7, 0) },
+                    },
+                    copy => null, () => { });
                 new System.Windows.Window
                 {
                     Title = "Settings preview",

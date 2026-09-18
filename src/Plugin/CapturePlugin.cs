@@ -409,7 +409,9 @@ namespace LovelyCarDataCapture
                                       StartCapture,
                                       // Exporting waits on GitHub, so it can't run on the thread drawing this page.
                                       () => Task.Run(() => StopAndExport()),
-                                      () => _capturing, OverlayStatus);
+                                      () => _capturing, OverlayStatus,
+                                      AtsrCopiesNow, RemoveAtsrCopy,
+                                      () => System.Diagnostics.Process.Start("explorer.exe", "\"" + AtsrDevCopies.Folder(SimHubFolder) + "\""));
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 
@@ -488,7 +490,7 @@ namespace LovelyCarDataCapture
             }
 
             var utf8 = new UTF8Encoding(false);
-            if (Settings.CopyToAtsrDeveloperFolder) CopyToAtsrDeveloperFolder(session.CarId, json, result.Report, utf8);
+            bool copied = Settings.CopyToAtsrDeveloperFolder && CopyToAtsrDeveloperFolder(session.GameName, session.CarId, json, result.Report, utf8);
 
             try
             {
@@ -508,6 +510,7 @@ namespace LovelyCarDataCapture
                 Say("Saved " + Path.GetFileName(path) + " to " + Path.GetDirectoryName(path) + "." +
                     " From " + result.Source + "." +
                     (result.AtsrProblems.Count > 0 ? " " + result.AtsrProblems.Count + " ATSR warning(s) in the report." : "") +
+                    (copied ? " Also copied to ATSR's Developer Mode folder: switch Developer Mode off and on in ATSR to see it on the wheel." : "") +
                     " Read the report before submitting.");
             }
             catch (Exception ex)
@@ -519,27 +522,47 @@ namespace LovelyCarDataCapture
 
         // Lets the file be tried on real hardware straight away: ATSR's Developer Mode reads this folder
         // before its own copy of the repo. Adds the outcome to the report.
-        private void CopyToAtsrDeveloperFolder(string carId, string json, List<string> report, Encoding encoding)
+        private static string SimHubFolder => Path.GetDirectoryName(typeof(CapturePlugin).Assembly.Location);
+
+        private bool CopyToAtsrDeveloperFolder(string game, string carId, string json, List<string> report, Encoding encoding)
         {
-            var simHubFolder = Path.GetDirectoryName(typeof(CapturePlugin).Assembly.Location);
-            var devPath = AtsrCompatibility.DevelopmentFilePath(simHubFolder, carId);
+            var devPath = AtsrCompatibility.DevelopmentFilePath(SimHubFolder, carId);
             report.Add("");
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(devPath));
-                File.WriteAllText(devPath, json, encoding);
+                var notes = AtsrDevCopies.Write(Settings, SimHubFolder, game, carId, json, encoding);
+                this.SaveCommonSettings("CaptureSettings", Settings);
                 _lastAtsrDevPath = devPath;
                 report.Add("Copied to ATSR's Developer Mode folder: " + devPath);
+                report.AddRange(notes);
                 report.Add("  To use it: in ATSR's RPM settings, turn Developer Mode on (or off and on again) to reload the file.");
                 report.Add("  If the lights don't change, restart SimHub.");
-                report.Add("  Remove the copy when you're done, or ATSR keeps using it instead of the repo's file.");
+                report.Add("  While it's there ATSR uses it instead of the repo's file for this car in every game. Remove it from");
+                report.Add("  the plugin's settings page (ATSR Developer Mode) once it's checked.");
                 SimHub.Logging.Current.Info(LogPrefix + "Copied to ATSR Developer Mode folder: " + devPath);
+                return true;
             }
             catch (Exception ex)
             {
                 report.Add("Couldn't copy to ATSR's Developer Mode folder (" + devPath + "): " + ex.Message);
                 SimHub.Logging.Current.Error(LogPrefix + "Copy to ATSR Developer Mode folder failed: " + devPath, ex);
+                return false;
             }
+        }
+
+        private List<AtsrCopy> AtsrCopiesNow()
+        {
+            var copies = AtsrDevCopies.Current(Settings, SimHubFolder, OutputFolder(), out bool changed);
+            if (changed) this.SaveCommonSettings("CaptureSettings", Settings);
+            return copies;
+        }
+
+        private string RemoveAtsrCopy(AtsrCopy copy)
+        {
+            var error = AtsrDevCopies.Remove(Settings, SimHubFolder, copy);
+            this.SaveCommonSettings("CaptureSettings", Settings);
+            if (error == null) SimHub.Logging.Current.Info(LogPrefix + "Removed from ATSR Developer Mode folder: " + copy.File);
+            return error;
         }
 
         private void LogRawTypeOnce(object raw)

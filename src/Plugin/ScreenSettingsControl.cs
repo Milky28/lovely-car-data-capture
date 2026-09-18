@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -31,6 +33,11 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Func<bool> _capturing;
         private readonly Func<string> _statusText;
         private readonly DispatcherTimer _timer;
+        private readonly Func<List<AtsrCopy>> _atsrCopies;
+        private readonly Func<AtsrCopy, string> _removeAtsrCopy;
+        private readonly StackPanel _atsrList = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+        private readonly TextBlock _atsrResult = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Dim, MaxWidth = 620 };
+        private Expander _atsrSection;
 
         private readonly TextBlock _region = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Dim };
         private readonly TextBlock _result = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), Foreground = Dim, MaxWidth = 620 };
@@ -41,8 +48,11 @@ namespace LovelyCarDataCapture.Plugin
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
                                      Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action pickFromStill, Action<string> say,
                                      Func<string> outputFolder, Action start, Action stop, Func<bool> capturing,
-                                     Func<string> status)
+                                     Func<string> status, Func<List<AtsrCopy>> atsrCopies, Func<AtsrCopy, string> removeAtsrCopy,
+                                     Action openAtsrFolder)
         {
+            _atsrCopies = atsrCopies;
+            _removeAtsrCopy = removeAtsrCopy;
             _settings = settings;
             _save = save;
             _test = test;
@@ -157,6 +167,29 @@ namespace LovelyCarDataCapture.Plugin
                 },
                 Paragraph("Read the report before submitting anything: it lists every measurement with the range it was pinned down to, what was left out and why, and anything ATSR would trip over. The RPM LED Builder opens the file for a last look.")));
 
+            var openFolder = new Button { Content = "Open the folder", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(0, 0, 8, 0) };
+            openFolder.Click += (s, e) => openAtsrFolder();
+            var removeAll = new Button { Content = "Remove all of them", Padding = new Thickness(10, 2, 10, 2) };
+            removeAll.Click += (s, e) =>
+            {
+                var errors = _atsrCopies().Select(c => _removeAtsrCopy(c)).Where(x => x != null).ToList();
+                ShowAtsrCopies();
+                _atsrResult.Text = errors.Count == 0 ? "Removed. ATSR uses the repo's files again once Developer Mode is switched off and on."
+                                                     : "Some couldn't be removed: " + string.Join("; ", errors);
+            };
+            var atsrButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+            atsrButtons.Children.Add(openFolder);
+            atsrButtons.Children.Add(removeAll);
+            _atsrSection = Section("Checking a file on the wheel (ATSR Developer Mode)", false,
+                Paragraph("With \"Copy each export to ATSR's Developer Mode folder\" ticked, every export is also put where ATSR looks first. " +
+                          "Straight after a drive, switch Developer Mode on in ATSR's RPM settings (or off and on again) and the wheel shows the new file."),
+                Paragraph("While a copy is there ATSR uses it instead of the repo's file for that car, in every game: ATSR keeps one file per " +
+                          "car id, so a car in two games shares it. Remove each copy once it's checked. Removed files go to the Recycle Bin."),
+                _atsrList,
+                atsrButtons,
+                _atsrResult);
+            panel.Children.Add(_atsrSection);
+
             panel.Children.Add(Section("Buttons you can map", false,
                 Paragraph("All of this works from here, so mapping is only needed for a game that stops running when it loses focus. In SimHub's Controls and events:"),
                 Bullet("StartCapture, StopAndExport, and ResetCapture to throw away what's been recorded."),
@@ -193,9 +226,10 @@ namespace LovelyCarDataCapture.Plugin
             panel.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
                                      "Looks the car up on GitHub, read-only, and keeps its name, colours, gaps and anything not measured.",
                                      v => _settings.UseRepoFile = v));
-            panel.Children.Add(Check("Also write exports to ATSR's Developer Mode folder", settings.CopyToAtsrDeveloperFolder,
-                                     "Lets ATSR show the file on your wheel before you submit it. Turn Developer Mode on in ATSR's RPM " +
-                                     "settings, and delete the copy afterwards or ATSR keeps using it instead of the repo's file.",
+            panel.Children.Add(Check("Copy each export to ATSR's Developer Mode folder", settings.CopyToAtsrDeveloperFolder,
+                                     "Lets ATSR show the file on your wheel straight after the drive, before you submit it. Switch " +
+                                     "Developer Mode on in ATSR's RPM settings to load it, and remove the copy afterwards from " +
+                                     "\"Checking a file on the wheel\" above, or ATSR keeps using it instead of the repo's file.",
                                      v => _settings.CopyToAtsrDeveloperFolder = v));
             panel.Children.Add(Check("Show the panel over the game", settings.ShowOverlay,
                                      "Says what each button press did and how the capture is going. Drag it anywhere; it never takes focus.",
@@ -218,8 +252,43 @@ namespace LovelyCarDataCapture.Plugin
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
             _timer.Tick += (s, e) => Tick();
-            Loaded += (s, e) => { _timer.Start(); Tick(); };
+            Loaded += (s, e) => { _timer.Start(); Tick(); ShowAtsrCopies(); };
             Unloaded += (s, e) => _timer.Stop();
+        }
+
+        /// <summary>
+        /// Lists this plugin's copies in ATSR's folder, each with a button to take it out. The section
+        /// opens by itself when there are any, since each one is overriding the repo's file right now.
+        /// </summary>
+        private void ShowAtsrCopies()
+        {
+            _atsrList.Children.Clear();
+            List<AtsrCopy> copies;
+            try { copies = _atsrCopies(); }
+            catch (Exception ex) { _atsrResult.Text = "Couldn't read ATSR's folder: " + ex.Message; return; }
+            if (copies.Count == 0)
+            {
+                _atsrList.Children.Add(new TextBlock { Text = "No copies there now.", Foreground = Dim });
+                return;
+            }
+            _atsrSection.IsExpanded = true;
+            _atsrSection.Header = "Checking a file on the wheel (ATSR Developer Mode) - " + copies.Count + " cop" + (copies.Count == 1 ? "y" : "ies") + " in use";
+            foreach (var copy in copies)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+                var remove = new Button { Content = "Remove", Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 0, 10, 0) };
+                var item = copy;
+                remove.Click += (s, e) =>
+                {
+                    var error = _removeAtsrCopy(item);
+                    ShowAtsrCopies();
+                    _atsrResult.Text = error == null ? item.File + " removed. Switch Developer Mode off and on in ATSR to go back to the repo's file."
+                                                     : "Couldn't remove " + item.File + ": " + error;
+                };
+                row.Children.Add(remove);
+                row.Children.Add(new TextBlock { Text = item.ToString(), VerticalAlignment = VerticalAlignment.Center, FontFamily = new FontFamily("Consolas") });
+                _atsrList.Children.Add(row);
+            }
         }
 
         /// <summary>A heading that folds its detail away. The first one starts open, so there's somewhere to begin.</summary>
