@@ -592,6 +592,28 @@ namespace LovelyCarDataCapture.Tests
             Check(composed.Profile.LedRpm["1"][0] < composed.Profile.LedRpm["3"][0] - 100, "1st keeps its lower redline");
         }
 
+        private static void ScreenRealNewAccCar()
+        {
+            var session = new CaptureSession("AssettoCorsaCompetizione", "ginetta_g55_gt4");
+            session.RecordCar("Ginetta G55 GT4 2012", "GT4");
+            foreach (var f in LoadFrames(DataPath("acc-ginetta-g55-gt4.frames.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var composed = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 18));
+            if (_showReports) Console.WriteLine(string.Join(Environment.NewLine, composed.Report));
+            var p = composed.Profile;
+
+            Equal("Ginetta G55 GT4", p.CarName, "the model year is dropped from a new car's name");
+            Equal(8, p.LedNumber, "eight lights");
+            // Lit from the outside in, a pair every 200 rpm, the middle pair with the redline.
+            var expected = new[] { 6900, 6300, 6500, 6700, 6900, 6900, 6700, 6500, 6300 };
+            foreach (var gear in p.GearOrder)
+                for (int i = 0; i < expected.Length; i++)
+                    Check(Math.Abs(p.LedRpm[gear][i] - expected[i]) <= 15, "gear " + gear + " value " + i + " is about " + expected[i] + ", got " + p.LedRpm[gear][i]);
+            Check(p.LedRpm["3"].Skip(1).All(v => v % 5 == 0), "pooled values are whole multiples of 5");
+            Equal("#FF00FF00", p.LedColor[1], "the outer pair is green");
+            Equal("#FFFFFF00", p.LedColor[3], "the third pair is yellow");
+            Equal("#FFFF0000", p.LedColor[0], "the redline is red");
+        }
+
         private static string AccMcLarenJson() => @"{
   ""carName"": ""McLaren 720S GT3 EVO"",
   ""carId"": ""mclaren_720s_gt3_evo"",

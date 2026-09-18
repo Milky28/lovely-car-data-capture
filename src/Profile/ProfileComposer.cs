@@ -339,7 +339,8 @@ namespace LovelyCarDataCapture.Profile
             if (bestGear != null && measuredTwice && agree)
             {
                 var pooled = (int[])p.LedRpm[bestGear].Clone();
-                foreach (int led in measuredLeds) pooled[led] = Median(byLed[led]);
+                // To 5 rpm like every other value: the middle of an even count can land between two.
+                foreach (int led in measuredLeds) pooled[led] = (int)(Math.Round(Median(byLed[led]) / 5.0) * 5);
                 int last = measuredLeds.Select(i => pooled[i]).DefaultIfEmpty(0).Max();
                 var redlines = results.Select(r => p.LedRpm[r.Gear][0]).Where(v => v > 0).ToList();
                 pooled[0] = Math.Max(redlines.Count > 0 ? Median(redlines) : pooled[0], last);
@@ -417,6 +418,18 @@ namespace LovelyCarDataCapture.Profile
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// SimHub's model name for a new car without the model year ACC adds to every car ("Ginetta G55
+        /// GT4 2012"). The repo keeps a year only where it tells two versions apart (the 2016 and 2018
+        /// Bentleys), which the report asks to be checked. The file name comes from the car id either way.
+        /// </summary>
+        internal static string NewCarName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return name;
+            var m = System.Text.RegularExpressions.Regex.Match(name, @"^(.*\S)\s+(19|20)\d\d$");
+            return m.Success ? m.Groups[1].Value : name;
         }
 
         private static int Median(List<int> values)
@@ -714,7 +727,7 @@ namespace LovelyCarDataCapture.Profile
         {
             var p = new CarProfile
             {
-                CarName = string.IsNullOrEmpty(s.CarModel) ? s.CarId : s.CarModel,
+                CarName = NewCarName(string.IsNullOrEmpty(s.CarModel) ? s.CarId : s.CarModel),
                 CarId = s.CarId,
                 CarClass = s.CarClass ?? "",
                 LedNumber = leds,
