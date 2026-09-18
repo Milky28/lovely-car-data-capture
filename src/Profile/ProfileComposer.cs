@@ -418,6 +418,12 @@ namespace LovelyCarDataCapture.Profile
                 if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
                 if (!SameRgb(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
             }
+            // The redline colour is ledColor[0], and it was never compared: two AMS2 cars turned out to
+            // flash cyan where their files say blue, and nothing said so.
+            if (!string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameRgb(p.LedColor[0], sr.RedlineColor))
+                notes.Add("Above the redline the strip showed " + sr.RedlineMeasured + ", nearest " + sr.RedlineColor +
+                          ", where the repo file's redline color is " + p.LedColor[0] + ". It was kept; change it by hand if the game agrees with the screen.");
+
             if (different.Count > 0)
                 notes.Add("Colors on screen suggest " + string.Join(", ", different) + ". The repo file's colors were kept" +
                           (sr.ColorsDoubtful ? ", and the measured colors were close together anyway." : "; change them by hand if the game disagrees."));

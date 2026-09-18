@@ -424,6 +424,9 @@ namespace LovelyCarDataCapture.Tests
             }
             Check(Math.Abs(row[0] - AudiFileRedline) <= 60, "the redline is close to the repo value: " + row[0]);
             Equal("#FF00FF00", p.LedColor[1], "the repo file's colours are kept");
+            // The Audi's flash is red and its file says red, so nothing to report; the AMS2 cars that
+            // flash cyan against a file saying blue are the reason this is checked at all.
+            Check(!result.Report.Any(l => l.Contains("redline color is")), "no redline colour difference on a car where they match");
             Equal("#00000000", p.LedColor[3], "the gap colour is kept");
             Equal(0, p.RedlineBlinkInterval, "no blink was measured, so the file's 0 stays");
             Check(!p.GearOrder.Contains("3") || p.LedRpm["3"].SequenceEqual(p.LedRpm["N"]) || p.LedRpm["3"][1] == AudiFileRpm[0],
