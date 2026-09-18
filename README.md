@@ -5,7 +5,7 @@ A SimHub plugin that measures a car's rev lights while you drive and writes a
 comes on at, their colours, the redline and whether the strip blinks. A report explains where every
 value came from.
 
-In AMS2, ACC, LMU and most other games it reads the lights off the screen. In F1 and iRacing it
+In AMS2, ACC, LMU, PMR and most other games it reads the lights off the screen. In F1 and iRacing it
 reads them from telemetry.
 
 *A community tool, not made by or affiliated with Lovely Sim Racing or ATSR.*
@@ -33,7 +33,9 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
    <img src="docs/images/pick-the-lights.jpg" width="360" alt="A still of ACC with an orange box drawn round the dash's rev lights and a banner reporting six lit lights found">
 3. Press **Start capture**.
 4. **Rev slowly from idle to the limiter**, three or four times, in two or three gears. Hold the
-   limiter for a second or two each time. Braking mid-sweep is fine. A panel over the game shows
+   limiter for a second or two each time. Braking mid-sweep is fine. In a game whose wheel turns
+   with yours, or that shows its lights well behind the revs (PMR), rev slowly in neutral instead,
+   hands off the wheel. A panel over the game shows
    what's being recorded.
 
    <img src="docs/images/capturing.jpg" width="420" alt="The recording panel over ACC: gear 2, 6768 rpm, 6 lights lit, 791 frames">
@@ -90,8 +92,8 @@ pull request.
 
 | Game | How the lights are read | Tested |
 | --- | --- | --- |
-| AMS2, ACC, LMU | Off the screen | Yes, against cars checked in game |
-| AC, AC EVO, RaceRoom, PMR and others | Off the screen | Not yet |
+| AMS2, ACC, LMU, PMR | Off the screen | Yes, against cars checked in game |
+| AC, AC EVO, RaceRoom and others | Off the screen | Not yet |
 | F1 2021–2026, iRacing | Telemetry | Not yet in game |
 
 ## More

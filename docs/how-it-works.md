@@ -60,8 +60,12 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
 - **How far behind the revs the game draws its lights**, in milliseconds: the delay that makes each
   light's switching on (rising revs) and off (falling revs) agree. Every frame is read against the revs
   that long before it, which cancels a game's fade (ACC) as well as its render lag.
-- **What isn't a rev light**: a pale reflection lit even at idle, and indicators using some of the
-  lights - ACC's traction control (blue) and ABS (yellow) - are recognised and left out.
+- **What isn't a rev light**: a pale reflection lit even at idle, indicators using some of the
+  lights - ACC's traction control (blue) and ABS (yellow) - and anything lit far below where rev
+  lights work, like PMR's pit limiter flashing the strip at idle, are recognised and left out.
+- **Lights drawn white-hot**: PMR draws a lit light as a white centre with only a coloured glow,
+  on a rim faintly coloured itself. When the usual colour test sees a smear or nothing, lights are
+  found by their white centres instead and coloured from their own glow.
 - **Each light's colour**, matched by the order of the colours rather than their exact hue: a game
   washes its lights towards white, so a pure green LED can measure as `rgb(138,177,106)`.
 - **Where the strip turns to its redline colour, and whether it blinks there.** A blink is recognised
@@ -71,7 +75,10 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   where the blinking starts. A car that changes
   colour a second time near the limiter gets that reported too: a car file holds one redline, so only
   the first is written, and ATSR adds a second stage itself for some cars. So does a strip that flashes
-  between its redline colour and its own (LMU's SC63), which ATSR can't show.
+  between its redline colour and its own (LMU's SC63), which ATSR can't show. Whatever the strip
+  does once it's in its redline state - PMR's C8.R sweeps blue in 2, 4, 6, 8 lights - isn't taken for
+  lights switching on. A strip held at the limiter with nothing changing has no redline effect: a new
+  car's file gets a transparent redline at the limiter, so ATSR leaves the lights alone too.
 
 Each light's own colour is the one it shows most while lit, leaving out moments when the whole strip is
 one colour (the redline, a blink, a fade). Sweeps have to start below the first light, so each light is
