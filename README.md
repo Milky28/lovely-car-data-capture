@@ -197,7 +197,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `CopyToAtsrDeveloperFolder` | `false` | Also write each export to ATSR's Developer Mode folder. |
 | `ScreenCapture` | `false` | Read the rev lights off the screen while capturing. |
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Position the box…*. |
-| `ScreenCaptureFps` | `30` | Frames read per second. |
+| `ScreenCaptureFps` | `30` | Frames read per second, 30 or 60. Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames to time, or one that revs very quickly; it roughly doubles the CPU a capture uses. Also on the plugin's page. |
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
 | `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |

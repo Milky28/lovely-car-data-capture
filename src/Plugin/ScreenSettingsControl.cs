@@ -156,6 +156,7 @@ namespace LovelyCarDataCapture.Plugin
             panel.Children.Add(Check("Read the rev lights off the screen", settings.ScreenCapture,
                                      "Needed for every game except F1 and iRacing, which report their lights directly.",
                                      v => _settings.ScreenCapture = v));
+            panel.Children.Add(FrameRate());
             panel.Children.Add(Check("Use the measured values for gears that weren't swept", settings.CopyMeasuredToOtherGears,
                                      "For when only one gear could be swept cleanly. Two gears that agree are pooled anyway. Without " +
                                      "this, unswept gears keep the repo file's values and the file ends up saying two different things.",
@@ -177,7 +178,7 @@ namespace LovelyCarDataCapture.Plugin
 
             panel.Children.Add(new TextBlock
             {
-                Text = @"Frame rate, RPM rounding and the LED count for brand-new cars live in PluginsData\Common\CapturePlugin.CaptureSettings.json, edited with SimHub closed.",
+                Text = @"RPM rounding and the LED count for brand-new cars live in PluginsData\Common\CapturePlugin.CaptureSettings.json, edited with SimHub closed.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Dim,
                 Margin = new Thickness(0, 14, 0, 0),
@@ -247,6 +248,41 @@ namespace LovelyCarDataCapture.Plugin
                 button.Click += (s, e) => buttonAction();
                 row.Children.Add(button);
             }
+            return row;
+        }
+
+        /// <summary>
+        /// How often the box is read. The one setting here with a cost as well as a benefit, so the
+        /// hover says both: when 60 is worth it, and what it takes.
+        /// </summary>
+        private StackPanel FrameRate()
+        {
+            var choice = new ComboBox { Width = 70, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            foreach (int fps in new[] { 30, 60 }) choice.Items.Add(fps);
+            choice.SelectedItem = _settings.ScreenCaptureFps >= 45 ? 60 : 30;
+            choice.SelectionChanged += (s, e) =>
+            {
+                _settings.ScreenCaptureFps = (int)choice.SelectedItem;
+                _save();
+            };
+
+            var label = new TextBlock { Text = "Frames read per second", VerticalAlignment = VerticalAlignment.Center };
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 4, 0, 4),
+                ToolTip = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 380,
+                    Text = "30 is enough for most cars: a slow sweep crosses each light over many frames.\n\n" +
+                           "Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames " +
+                           "to time it, and for anything that revs very quickly. It costs roughly twice the CPU while a " +
+                           "capture runs, and applies from the next capture started.",
+                },
+            };
+            row.Children.Add(label);
+            row.Children.Add(choice);
             return row;
         }
 
