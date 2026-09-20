@@ -20,6 +20,8 @@ namespace LovelyCarDataCapture.Capture
     {
         /// <summary>Rev lights the F1 games report, whatever the car's own dash shows.</summary>
         public const int F1LedCount = 15;
+        // PMR can miss a lit light near the limiter; rearm it only after revs fall below its onset.
+        private const int ReArmBelowOnRpm = 50;
 
         private readonly int _ledCount;
 
@@ -38,16 +40,22 @@ namespace LovelyCarDataCapture.Capture
                 LowestOn = Enumerable.Repeat(int.MaxValue, leds).ToArray();
                 HighestOff = Enumerable.Repeat(-1, leds).ToArray();
                 DarkInClimb = new bool[leds];
+                MeasuredInClimb = new bool[leds];
                 OffInClimb = Enumerable.Repeat(-1, leds).ToArray();
                 ClimbMidpoints = Enumerable.Range(0, leds).Select(_ => new List<double>()).ToArray();
+                ClimbWidths = Enumerable.Range(0, leds).Select(_ => new List<double>()).ToArray();
             }
 
             public readonly int[] LowestOn;
             public readonly int[] HighestOff;
             /// <summary>Seen dark earlier in the current climb.</summary>
             public readonly bool[] DarkInClimb;
+            /// <summary>A missed lit frame cannot create another switch-on in the same climb.</summary>
+            public readonly bool[] MeasuredInClimb;
             /// <summary>One switch-on window per climb, per LED: the midpoints are what the value is taken from.</summary>
             public readonly List<double>[] ClimbMidpoints;
+            /// <summary>Width of each switch-on window, kept per climb instead of inferred from aggregate bounds.</summary>
+            public readonly List<double>[] ClimbWidths;
             /// <summary>Highest RPM the LED has been seen dark at in the climb under way.</summary>
             public readonly int[] OffInClimb;
             public int PreviousRpm = -1;
@@ -95,8 +103,12 @@ namespace LovelyCarDataCapture.Capture
                 // A new climb may start here: remember which LEDs are dark at its bottom.
                 for (int i = 0; i < _ledCount; i++)
                 {
-                    g.DarkInClimb[i] = !(i < lit.Length && lit[i]);
-                    g.OffInClimb[i] = -1;
+                    if (g.LowestOn[i] == int.MaxValue || rpm < g.LowestOn[i] - ReArmBelowOnRpm)
+                    {
+                        g.DarkInClimb[i] = !(i < lit.Length && lit[i]);
+                        g.MeasuredInClimb[i] = false;
+                        g.OffInClimb[i] = -1;
+                    }
                 }
                 return;
             }
@@ -106,6 +118,7 @@ namespace LovelyCarDataCapture.Capture
             {
                 if (!(i < lit.Length && lit[i]))
                 {
+                    if (g.MeasuredInClimb[i]) continue;
                     g.DarkInClimb[i] = true;
                     g.OffInClimb[i] = rpm;
                     if (rpm > g.HighestOff[i]) g.HighestOff[i] = rpm;
@@ -114,7 +127,9 @@ namespace LovelyCarDataCapture.Capture
                 {
                     if (rpm < g.LowestOn[i]) g.LowestOn[i] = rpm;
                     if (g.OffInClimb[i] >= 0) g.ClimbMidpoints[i].Add((g.OffInClimb[i] + rpm) / 2.0);
+                    if (g.OffInClimb[i] >= 0) g.ClimbWidths[i].Add(rpm - g.OffInClimb[i]);
                     g.DarkInClimb[i] = false;
+                    g.MeasuredInClimb[i] = true;
                 }
             }
         }
@@ -148,9 +163,11 @@ namespace LovelyCarDataCapture.Capture
                     // into its neighbour, a missed RPM reading) then moves the value by nothing.
                     leds[i] = new LedThreshold(RoundTo(Median(climbs), 5), off >= 0 ? off : (int?)null, on)
                     {
-                        Inconsistent = off >= 0 && off >= on && climbs.Count < 2,
+                        // Adjacent dark and lit frames can share the same rounded telemetry RPM.
+                        Inconsistent = off >= 0 && off > on && climbs.Count < 2,
                         Climbs = climbs.Count,
                         ClimbSpread = (int)Math.Round(climbs.Max() - climbs.Min()),
+                        ClimbWidth = (int)Math.Round(g.ClimbWidths[i].Max()),
                     };
                 }
                 else if (off >= 0 && off < on)
@@ -192,6 +209,8 @@ namespace LovelyCarDataCapture.Capture
         public int Climbs { get; set; }
         /// <summary>How far apart those climbs put the value, in RPM.</summary>
         public int ClimbSpread { get; set; }
+        /// <summary>Widest individual switch-on window across climbs, in RPM.</summary>
+        public int ClimbWidth { get; set; }
         /// <summary>Where the light was seen switching off as the revs fell, when that was used; null otherwise.</summary>
         public int? FallRpm { get; private set; }
 
@@ -204,19 +223,10 @@ namespace LovelyCarDataCapture.Capture
             Inconsistent = Inconsistent,
             Climbs = Climbs,
             ClimbSpread = ClimbSpread,
+            ClimbWidth = ClimbWidth,
             FallRpm = fallRpm,
         };
 
-        /// <summary>RPM taken off for display lag measured on the strip's other lights, when this one had no switch-off of its own.</summary>
-        public int LagTaken { get; private set; }
-
-        public LedThreshold WithLagTaken(int rpm, int taken) => new LedThreshold(rpm, HighestOff, LowestOn)
-        {
-            Inconsistent = Inconsistent,
-            Climbs = Climbs,
-            ClimbSpread = ClimbSpread,
-            LagTaken = taken,
-        };
     }
 
     internal sealed class GearLedResult

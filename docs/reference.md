@@ -11,7 +11,7 @@ In SimHub's *Controls and events*, all under `LovelyCarDataCapture.`:
 | --- | --- |
 | `StartCapture` | Starts recording the car you're in. |
 | `StopAndExport` | Stops and writes the car file, its report and the raw frames. |
-| `ResetCapture` | Throws away what's been recorded. |
+| `ResetCapture` | Stops recording and throws away what's been recorded. StartCapture begins again. |
 | `PickCaptureBox` | Takes a still of the screen straight away and lets you draw the box on it. |
 | `ShowCaptureBox` | Opens the live frame over the game. |
 | `MarkLed` / `MarkRedline` / `UndoMark` | Marking lights by hand, for games whose lights can't be read. |
@@ -34,6 +34,62 @@ shares one file. The settings page's **Checking a file on the wheel** section li
 copies with the game and time each came from, and removes them (to the Recycle Bin) once checked. The
 report says when an export replaced another game's copy, and a file there that the plugin didn't write
 is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritten.
+
+LMU reports the car `Lamborghini Iron Lynx 2024`, while ATSR canonicalizes it as `Lamborghini SC63`.
+For this one known case the local test copy is therefore named `lamborghini-sc63.json`; the exported
+Lovely Car Data file keeps the game's original car id.
+
+## Keeping confirmed colors and blink timing
+
+Local adjustments go in `<car>.overrides.json` beside the exported `<car>.json`, inside that game's
+output folder. Only explicitly listed colors and blink timing are kept across captures. Editing those
+fields in the generated car file alone does not preserve them on the next export.
+
+For example, `lmu/lamborghini-iron-lynx-2024.overrides.json` keeps the SC63's confirmed yellow group:
+
+```json
+{
+  "game": "lmu",
+  "carId": "Lamborghini Iron Lynx 2024",
+  "ledNumber": 10,
+  "ledColor": { "6": "#FFFFFF00", "7": "#FFFFFF00", "8": "#FFFFFF00" }
+}
+```
+
+`game` is the export's game folder name, `carId` is the game's raw ID, and `ledNumber` must match the
+profile. Color keys are LED numbers (0 is the redline color); values use `#AARRGGBB`. An optional
+`"redlineBlinkInterval": 200` keeps a 200 ms interval; zero disables blinking. These values take
+precedence over both the repository and new measurements, and the report lists what was applied.
+Remove an entry or the override file to resume normal capture behavior. No plugin setting is needed.
+Detected screen gaps always remain black with RPM 0 in every gear, including retained gears;
+repository colors or local color overrides cannot turn those empty positions into lit LEDs.
+
+An invalid file or mismatched identity/LED count stops export before replacing existing car or ATSR
+files. Correct the override and press **Stop and export** again while the session is still loaded.
+Overrides are local preferences and are not part of a Lovely Car Data submission.
+
+## Export backups
+
+Before replacing an existing car file or report, the plugin copies their original bytes together to
+`<game>/backups/<car>/<UTC timestamp>-<unique suffix>/` inside the output folder. The new report gives
+the backup location. If either copy fails, the export stops before replacing the files or updating
+ATSR. The first export needs no backup; if only one old file exists, that file is still saved.
+
+Backups contain the JSON and report, not raw frames, transition images or overrides. They are not
+deleted automatically. To restore a capture, copy its JSON and report back to their original game
+folder. ATSR's development copy must also be replaced and reloaded if you want that backup on the wheel.
+
+## Capturing additional gears
+
+Each export reads the previous car file from the same game's output folder. Gears absent from the
+current capture keep their previous RPM rows, including redline. Gears captured now use the normal
+measurement and repository fallback rules. Colors and blink timing still use the overrides above.
+The report lists which gears came from the previous export.
+
+The car ID, LED count and gap positions must match. Incompatible profiles or invalid RPM rows are
+skipped with a report note; unreadable JSON stops the export so the existing file is kept. With
+**CopyMeasuredToOtherGears** on, screen captures retain that setting's behavior instead of restoring
+previous gear rows. Move the previous export out of the output folder to start again from the repo.
 
 ## How long a capture runs
 
@@ -81,6 +137,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
 | `SaveCaptureFrames` | `true` | Write `<car>.frames.csv` next to each screen-capture export: every frame's RPM and the lights seen. Replay it with `LovelyCarDataCapture.Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json` to check a capture again without driving it. |
+| `SaveTransitionFrames` | `false` | Keep cropped images before, during and after changes in the detected lights. Enable before starting a diagnostic capture. Export writes PNGs and a JSON manifest in a separate `<car>.transitions-...` folder. Keeps up to two examples of each change per gear, at most 24 transitions per gear and 64 overall (up to 192 images), within 64 MiB of retained pixels. The report identifies skipped repeats, limits or missing images. |
 | `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |
 | `OutputFolder` | *(Documents\SimHub\LovelyCarDataCapture)* | |
 | `LedNumber` | `12` | LED count for new cars in games without LED data. |

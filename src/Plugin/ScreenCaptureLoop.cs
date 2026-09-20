@@ -1,17 +1,20 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.Threading;
+using LovelyCarDataCapture.Capture;
 using LovelyCarDataCapture.Screen;
 
 namespace LovelyCarDataCapture.Plugin
 {
-    /// <summary>What to record a frame against: the car being captured, and where the revs are right now.</summary>
+    /// <summary>What to record a frame against: one capture generation and its recent telemetry.</summary>
     internal sealed class ScreenTarget
     {
-        public string Gear;
-        public int Rpm;
         public ScreenLedCapture Capture;
+        public TelemetryHistory Telemetry;
+        public long SessionId;
+        public string Game;
+        public string Car;
         /// <summary>The capture has all the frames it can keep: nothing to read the screen for.</summary>
         public bool Full;
     }
@@ -21,17 +24,22 @@ namespace LovelyCarDataCapture.Plugin
     /// </summary>
     /// <remarks>
     /// Kept off SimHub's data thread: a screen copy takes a few milliseconds, which is fine here and
-    /// not fine there. The gear and RPM come from the newest telemetry frame instead of being read out
-    /// of the picture, so unlike a recording there's nothing lagging behind.
+    /// not fine there. Telemetry is sampled at the screen acquisition time, so detector runtime does not
+    /// add a variable delay to the RPM paired with a frame.
     /// </remarks>
     internal sealed class ScreenCaptureLoop : IDisposable
     {
-        private readonly StripDetector _detector = new StripDetector();
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
         private Thread _thread;
+        private readonly object _lifecycle = new object();
+        private CancellationTokenSource _stop;
         private volatile bool _running;
         private PixelRect _region;
         private int _intervalMs = 33;
+        private int _fps;
+        private bool _saveTransitions;
+        private ScreenLedCapture _diagnosticCapture;
+        private TransitionFrameRecorder _transitions;
+        private string _diagnosticError;
 
         /// <summary>
         /// How often to look again while there's nothing to record - the game paused, in a menu or
@@ -51,48 +59,81 @@ namespace LovelyCarDataCapture.Plugin
         public int LightsSeen => _lights;
         public long Frames => Interlocked.Read(ref _frames);
 
-        public void Start(PixelRect region, int fps)
+        public void Start(PixelRect region, int fps, bool saveTransitions = false)
         {
-            Stop();
-            _region = region;
-            _intervalMs = Math.Max(10, (int)Math.Round(1000.0 / Math.Max(1, Math.Min(60, fps))));
-            _running = true;
-            _status = "starting";
-            _thread = new Thread(Run) { IsBackground = true, Name = "LovelyCarDataCapture screen" };
-            _thread.Start();
+            lock (_lifecycle)
+            {
+                Stop();
+                _region = region;
+                _fps = fps;
+                _saveTransitions = saveTransitions;
+                _diagnosticCapture = null;
+                _transitions = null;
+                _diagnosticError = null;
+                _intervalMs = Math.Max(10, (int)Math.Round(1000.0 / Math.Max(1, Math.Min(60, fps))));
+                _stop = new CancellationTokenSource();
+                var token = _stop.Token;
+                _running = true;
+                _status = "starting";
+                _thread = new Thread(() => Run(token)) { IsBackground = true, Name = "LovelyCarDataCapture screen" };
+                _thread.Start();
+            }
         }
 
         public void Stop()
         {
-            _running = false;
-            var thread = _thread;
-            _thread = null;
-            if (thread != null && thread.IsAlive) thread.Join(500);
-            _status = "off";
+            lock (_lifecycle)
+            {
+                _running = false;
+                _stop?.Cancel();
+                // Export reads the recording next, so the last writer must actually be finished.
+                // Cancellation wakes idle/error waits immediately instead of abandoning a worker.
+                _thread?.Join();
+                _thread = null;
+                _stop?.Dispose();
+                _stop = null;
+                _status = "off";
+            }
         }
 
         public bool IsRunning => _running;
 
-        private void Run()
+        public void ClearTransitionFrames()
+        {
+            lock (_lifecycle)
+            {
+                if (_running) throw new InvalidOperationException("Stop screen capture before clearing transition images.");
+                _transitions = null;
+                _diagnosticCapture = null;
+                _diagnosticError = null;
+            }
+        }
+
+        private void Run(CancellationToken stop)
         {
             using (var grabber = new ScreenGrabber())
             {
+                var detector = new StripDetector();
+                ScreenLedCapture detectorCapture = null;
                 string lastProblem = null;
-                while (_running)
+                while (!stop.IsCancellationRequested)
                 {
-                    long started = _clock.ElapsedMilliseconds;
+                    long started = CaptureClock.NowMilliseconds;
                     try
                     {
                         var target = Target?.Invoke();
+                        if (stop.IsCancellationRequested) break;
                         if (target == null || target.Full)
                         {
+                            _transitions?.BreakSequence();
                             _status = target != null ? "capture full - press Stop and export" : "waiting for the car";
-                            Thread.Sleep(IdleIntervalMs);
+                            stop.WaitHandle.WaitOne(IdleIntervalMs);
                             continue;
                         }
-                        var frame = grabber.Grab(_region, out string problem);
+                        var frame = grabber.Grab(_region, out string problem, out long acquiredAt);
                         if (frame == null)
                         {
+                            _transitions?.BreakSequence();
                             if (problem != lastProblem)
                             {
                                 lastProblem = problem;
@@ -103,24 +144,83 @@ namespace LovelyCarDataCapture.Plugin
                         else
                         {
                             lastProblem = null;
-                            var blobs = _detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
-                            _lights = blobs.Count;
-                            Interlocked.Increment(ref _frames);
-                            target.Capture.Record(target.Gear, target.Rpm, _clock.ElapsedMilliseconds, blobs);
-                            _status = "recording, " + blobs.Count + " lights lit";
+                            // Learned LED positions belong to this car and capture box only.
+                            if (!ReferenceEquals(detectorCapture, target.Capture))
+                            {
+                                detector = new StripDetector();
+                                detectorCapture = target.Capture;
+                            }
+                            // Grabber timestamps the desktop copy, before this detector runs.
+                            var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                            if (stop.IsCancellationRequested) break;
+                            var status = target.Telemetry.TrySample(target.SessionId, target.Game, target.Car, acquiredAt, out var telemetry);
+                            if (status == TelemetrySampleStatus.Ok)
+                            {
+                                _lights = blobs.Count;
+                                Interlocked.Increment(ref _frames);
+                                target.Capture.Record(telemetry.Gear, telemetry.Rpm, acquiredAt, blobs);
+                                RecordTransitions(target.Capture, frame, blobs, acquiredAt, telemetry.Gear, telemetry.Rpm);
+                                _status = "recording, " + blobs.Count + " lights lit";
+                            }
+                            else
+                            {
+                                _transitions?.BreakSequence();
+                                _status = "waiting for " + TelemetryStatus(status);
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
+                        _transitions?.BreakSequence();
                         _status = "error: " + ex.Message;
                         SimHub.Logging.Current.Error("[LovelyCarDataCapture] Screen capture loop", ex);
-                        Thread.Sleep(1000);
+                        stop.WaitHandle.WaitOne(1000);
                     }
 
-                    int elapsed = (int)(_clock.ElapsedMilliseconds - started);
+                    int elapsed = (int)(CaptureClock.NowMilliseconds - started);
                     int wait = _intervalMs - elapsed;
-                    if (wait > 0) Thread.Sleep(wait);
+                    if (wait > 0) stop.WaitHandle.WaitOne(wait);
                 }
+            }
+        }
+
+        private void RecordTransitions(ScreenLedCapture capture, PixelFrame frame, List<LitBlob> blobs,
+                                       long timeMs, string gear, int rpm)
+        {
+            if (!_saveTransitions) return;
+            if (!ReferenceEquals(_diagnosticCapture, capture))
+            {
+                _diagnosticCapture = capture;
+                _transitions = new TransitionFrameRecorder(true);
+                _diagnosticError = null;
+            }
+            if (_diagnosticError != null) return;
+            try { _transitions.Record(frame, blobs, timeMs, gear, rpm); }
+            catch (Exception ex)
+            {
+                // Diagnostics must never prevent the ordinary RPM capture from continuing.
+                _diagnosticError = "Transition images stopped: " + ex.Message;
+            }
+        }
+
+        /// <summary>Called after Stop joins the writer, so PNG compression cannot delay a captured frame.</summary>
+        public TransitionFrameExportResult ExportTransitions(ScreenLedCapture capture, string directory, string game, string car)
+        {
+            lock (_lifecycle)
+            {
+                if (_running) throw new InvalidOperationException("Stop screen capture before exporting transition images.");
+                if (!ReferenceEquals(_diagnosticCapture, capture) || _transitions == null) return null;
+                var settings = new DetectorSettings();
+                var result = _transitions.Export(directory, new TransitionFrameExportMetadata
+                {
+                    GameName = game,
+                    CarId = car,
+                    Fps = _fps,
+                    Region = new TransitionFrameRegion(_region.X, _region.Y, _region.Width, _region.Height),
+                    DetectorSettings = typeof(DetectorSettings).GetFields().ToDictionary(f => f.Name, f => f.GetValue(settings)),
+                });
+                if (_diagnosticError != null) result.Errors.Add(_diagnosticError);
+                return result;
             }
         }
 
@@ -131,7 +231,7 @@ namespace LovelyCarDataCapture.Plugin
             {
                 var frame = grabber.Grab(region, out string problem);
                 if (frame == null) return "Couldn't read the screen: " + problem;
-                var blobs = _detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                var blobs = new StripDetector().Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
                 if (blobs.Count == 0)
                     return "No lights found in the box. Rev the engine so some are lit, and check the box is over them.";
 
@@ -151,5 +251,16 @@ namespace LovelyCarDataCapture.Plugin
         }
 
         public void Dispose() => Stop();
+
+        private static string TelemetryStatus(TelemetrySampleStatus status)
+        {
+            switch (status)
+            {
+                case TelemetrySampleStatus.Stale: return "fresh telemetry";
+                case TelemetrySampleStatus.GearChanged: return "stable gear";
+                case TelemetrySampleStatus.SessionChanged: return "the current capture";
+                default: return "telemetry";
+            }
+        }
     }
 }

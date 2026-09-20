@@ -21,6 +21,12 @@ namespace LovelyCarDataCapture.Screen
     /// </remarks>
     internal static class LedPalette
     {
+        /// <summary>PMR's repeated green, red and blue lights keep their colour when one channel is clearly dominant.</summary>
+        private const double PrimaryChannelDominance = 1.6;
+
+        /// <summary>PMR's paired yellow lights can differ in hue while red and green remain this close.</summary>
+        private const double YellowChannelBalance = 0.08;
+
         private sealed class Step
         {
             public Step(string name, string hex, double hue) { Name = name; Hex = hex; Hue = hue; }
@@ -197,6 +203,30 @@ namespace LovelyCarDataCapture.Screen
             {
                 groups[i].Name = bestLadder[bestPicks[i]].Name;
                 groups[i].Hex = bestLadder[bestPicks[i]].Hex;
+                // PMR renders same-colour LEDs as separate shades. The distinct-colour ladder then
+                // calls green yellow, red orange, and blue cyan despite a clear dominant channel.
+                var measured = groups[i].Measured;
+                if (measured.G > measured.R * PrimaryChannelDominance && measured.G > measured.B * PrimaryChannelDominance)
+                {
+                    groups[i].Name = "green";
+                    groups[i].Hex = "#FF00FF00";
+                }
+                else if (measured.R > measured.G * PrimaryChannelDominance && measured.R > measured.B * PrimaryChannelDominance)
+                {
+                    groups[i].Name = "red";
+                    groups[i].Hex = "#FFFF0000";
+                }
+                else if (measured.B > measured.R * PrimaryChannelDominance && measured.B > measured.G * PrimaryChannelDominance)
+                {
+                    groups[i].Name = "blue";
+                    groups[i].Hex = "#FF0000FF";
+                }
+                else if (Math.Abs(measured.R - measured.G) <= Math.Max(measured.R, measured.G) * YellowChannelBalance &&
+                         Math.Min(measured.R, measured.G) > measured.B * PrimaryChannelDominance)
+                {
+                    groups[i].Name = "yellow";
+                    groups[i].Hex = "#FFFFFF00";
+                }
             }
         }
 

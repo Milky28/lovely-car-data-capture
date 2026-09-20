@@ -36,17 +36,6 @@ namespace LovelyCarDataCapture.Screen
             return best;
         }
 
-        /// <summary>Which slots are lit in one frame, index 0 = leftmost slot.</summary>
-        public bool[] LitSlots(IEnumerable<LitBlob> blobs)
-        {
-            var lit = new bool[LedNumber];
-            foreach (var b in blobs)
-            {
-                int slot = SlotOf(b.CenterX);
-                if (slot >= 0) lit[slot] = true;
-            }
-            return lit;
-        }
     }
 
     /// <summary>
@@ -56,6 +45,9 @@ namespace LovelyCarDataCapture.Screen
     /// </summary>
     internal sealed class StripCalibration
     {
+        // Real LED centers drift a few pixels; AC wheel occlusions can also leave isolated centers
+        // between LEDs. Only positions near a repeatedly seen center may join a light's group.
+        private const double PositionReachPx = 6;
         private readonly List<double> _centers = new List<double>();
         private int _frames;
         private int _mostInOneFrame;
@@ -85,11 +77,25 @@ namespace LovelyCarDataCapture.Screen
             }
 
             var sorted = _centers.OrderBy(x => x).ToList();
+            if (_frames >= 30)
+            {
+                var positions = sorted.GroupBy(x => Math.Round(x)).ToList();
+                double anchorNeeded = Math.Max(3, positions.Max(g => g.Count()) * 0.02);
+                var anchors = positions.Where(g => g.Count() >= anchorNeeded).Select(g => g.Key).ToList();
+                // Filter before grouping: a chain of rare positions must not connect adjacent LEDs
+                // and make their real positions look like empty slots in the strip.
+                sorted = sorted.Where(x => anchors.Any(a => Math.Abs(x - a) <= PositionReachPx)).ToList();
+                if (sorted.Count == 0)
+                {
+                    problem = "the lights were seen too rarely to place them";
+                    return null;
+                }
+            }
             // Group positions that are within a few pixels of each other: one group per physical light.
             var groups = new List<List<double>> { new List<double> { sorted[0] } };
             for (int i = 1; i < sorted.Count; i++)
             {
-                if (sorted[i] - groups[groups.Count - 1].Last() <= 6) groups[groups.Count - 1].Add(sorted[i]);
+                if (sorted[i] - groups[groups.Count - 1].Last() <= PositionReachPx) groups[groups.Count - 1].Add(sorted[i]);
                 else groups.Add(new List<double> { sorted[i] });
             }
 

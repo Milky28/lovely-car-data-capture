@@ -100,6 +100,10 @@ namespace LovelyCarDataCapture.Screen
         public int MinWidth = 6;
         /// <summary>Wider than this is glare or two lights bloomed together, not one light.</summary>
         public int MaxWidth = 40;
+        /// <summary>A four-dot LED cluster is about 50 px wide in the Mercedes CLK LM capture.</summary>
+        public int ClusterMaxWidth = 65;
+        /// <summary>Bright cores isolate those clusters from the dashboard graphics below them.</summary>
+        public int ClusterBrightness = 235;
         /// <summary>A white-hot light centre has every channel at least this bright.</summary>
         public int CoreBrightness = 235;
         /// <summary>Columns need this many white-hot pixels to be a light's centre: a rim highlight is thinner.</summary>
@@ -118,6 +122,13 @@ namespace LovelyCarDataCapture.Screen
     internal sealed class StripDetector
     {
         private readonly DetectorSettings _cfg;
+        // The LMU logo's blue-grey strokes span about 55-60 channel levels; lit LEDs carry stronger colour.
+        private const int PositionSaturation = 90;
+        // Include the edge/glow around a learned light and allow a few pixels of cockpit movement.
+        private const int PositionPadding = 8;
+        private PixelRect _positionRegion;
+        private int _frameWidth, _frameHeight;
+        private int[] _top, _bottom, _maskTop, _maskBottom;
 
         public StripDetector(DetectorSettings settings = null)
         {
@@ -130,20 +141,104 @@ namespace LovelyCarDataCapture.Screen
             int y0 = Math.Max(0, region.Y), y1 = Math.Min(frame.Height, region.Bottom);
             var blobs = new List<LitBlob>();
             if (x1 <= x0 || y1 <= y0) return blobs;
+            LearnPositions(frame, new PixelRect(x0, y0, x1 - x0, y1 - y0));
 
+            blobs = DetectColored(frame, x0, x1, y0, y1, _cfg.MinBrightness, _cfg.MaxWidth, out bool smeared);
+            // A bright four-dot cluster spans more than one ordinary LED, while a lit dashboard
+            // underneath joins the ordinary colour columns into one smear. The cluster's brightest
+            // pixels stay separate, even when none is white enough for the white-core detector.
+            if (smeared || blobs.Count == 0)
+            {
+                var cores = DetectCores(frame, x0, x1, y0, y1);
+                if (cores.Count > 0) return cores;
+                var clusters = DetectColored(frame, x0, x1, y0, y1, _cfg.ClusterBrightness, _cfg.ClusterMaxWidth, out _);
+                if (clusters.Count >= 3 || smeared && clusters.Count > 0) return clusters;
+                if (smeared) return cores;
+            }
+            return blobs;
+        }
+
+        private void LearnPositions(PixelFrame frame, PixelRect region)
+        {
+            if (_top == null || _frameWidth != frame.Width || _frameHeight != frame.Height ||
+                _positionRegion.X != region.X || _positionRegion.Y != region.Y ||
+                _positionRegion.Width != region.Width || _positionRegion.Height != region.Height)
+            {
+                _positionRegion = region;
+                _frameWidth = frame.Width;
+                _frameHeight = frame.Height;
+                _top = Enumerable.Repeat(-1, region.Width).ToArray();
+                _bottom = new int[region.Width];
+                _maskTop = new int[region.Width];
+                _maskBottom = new int[region.Width];
+            }
+
+            // Learn from strong colour before applying the mask: a new light on the curved strip
+            // must be allowed to establish its own height. Pale lettering never trains the mask.
+            for (int x = region.X; x < region.Right; x++)
+            {
+                int column = x - region.X, top = int.MaxValue, bottom = -1, count = 0;
+                for (int y = region.Y; y < region.Bottom; y++)
+                {
+                    if (_top[column] >= 0 &&
+                        (y < _top[column] - PositionPadding || y > _bottom[column] + PositionPadding)) continue;
+                    frame.GetPixel(x, y, out int r, out int g, out int b);
+                    int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                    if (max < _cfg.MinBrightness || max - min < Math.Max(PositionSaturation, _cfg.MinSaturation)) continue;
+                    top = Math.Min(top, y);
+                    bottom = y;
+                    count++;
+                }
+                if (count < _cfg.MinColumnPixels) continue;
+                _top[column] = _top[column] < 0 ? top : Math.Min(_top[column], top);
+                _bottom[column] = Math.Max(_bottom[column], bottom);
+            }
+
+            // Between observed columns, follow their local height instead of imposing one straight
+            // crop across the strip. Outside them, leave room for lights that have not lit yet.
+            int previous = -1;
+            for (int column = 0; column < region.Width; column++)
+            {
+                _maskTop[column] = region.Y;
+                _maskBottom[column] = region.Bottom - 1;
+                if (_top[column] < 0) continue;
+                _maskTop[column] = _top[column] - PositionPadding;
+                _maskBottom[column] = _bottom[column] + PositionPadding;
+                if (previous >= 0)
+                    for (int gap = previous + 1; gap < column; gap++)
+                    {
+                        double fraction = (gap - previous) / (double)(column - previous);
+                        _maskTop[gap] = (int)Math.Floor(_top[previous] + fraction * (_top[column] - _top[previous])) - PositionPadding;
+                        _maskBottom[gap] = (int)Math.Ceiling(_bottom[previous] + fraction * (_bottom[column] - _bottom[previous])) + PositionPadding;
+                    }
+                previous = column;
+            }
+        }
+
+        private bool AtLedHeight(int x, int y)
+        {
+            int column = x - _positionRegion.X;
+            return y >= _maskTop[column] && y <= _maskBottom[column];
+        }
+
+        private List<LitBlob> DetectColored(PixelFrame frame, int x0, int x1, int y0, int y1,
+                                            int minBrightness, int maxWidth, out bool smeared)
+        {
             var litColumn = new bool[x1 - x0];
             for (int x = x0; x < x1; x++)
             {
                 int count = 0;
                 for (int y = y0; y < y1; y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                    if (max >= _cfg.MinBrightness && max - min >= _cfg.MinSaturation) count++;
+                    if (max >= minBrightness && max - min >= _cfg.MinSaturation) count++;
                 }
                 litColumn[x - x0] = count >= _cfg.MinColumnPixels;
             }
 
+            var blobs = new List<LitBlob>();
             int start = -1;
             for (int i = 0; i <= litColumn.Length; i++)
             {
@@ -160,19 +255,9 @@ namespace LovelyCarDataCapture.Screen
                 }
             }
 
-            bool smeared = blobs.Any(b => b.Width > _cfg.MaxWidth);
-            blobs.RemoveAll(b => b.Width < _cfg.MinWidth || b.Width > _cfg.MaxWidth);
-            foreach (var blob in blobs) blob.Color = MeasureColor(frame, blob, y0, y1);
-
-            // Some games draw a lit light white-hot with only a coloured glow round it, on a surface
-            // that is itself faintly coloured - PMR's Viper, on a blue-grey carbon rim. The colour test
-            // then sees one long smear, or only the rim. The white centres stay separate, so they're
-            // used instead whenever the colour test came up with a smear or nothing.
-            if (smeared || blobs.Count == 0)
-            {
-                var cores = DetectCores(frame, x0, x1, y0, y1);
-                if (cores.Count > 0 || smeared) return cores;
-            }
+            smeared = blobs.Any(b => b.Width > maxWidth);
+            blobs.RemoveAll(b => b.Width < _cfg.MinWidth || b.Width > maxWidth);
+            foreach (var blob in blobs) blob.Color = MeasureColor(frame, blob, y0, y1, minBrightness);
             return blobs;
         }
 
@@ -185,6 +270,7 @@ namespace LovelyCarDataCapture.Screen
                 int count = 0;
                 for (int y = y0; y < y1; y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     if (Math.Min(r, Math.Min(g, b)) >= _cfg.CoreBrightness) count++;
                 }
@@ -223,6 +309,7 @@ namespace LovelyCarDataCapture.Screen
             for (int x = blob.Left; x <= blob.Right; x++)
                 for (int y = y0; y < y1; y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     if (Math.Min(r, Math.Min(g, b)) < _cfg.CoreBrightness) continue;
                     top = Math.Min(top, y);
@@ -234,6 +321,7 @@ namespace LovelyCarDataCapture.Screen
             for (int x = Math.Max(x0, blob.Left - _cfg.HaloReach); x <= Math.Min(x1 - 1, blob.Right + _cfg.HaloReach); x++)
                 for (int y = Math.Max(y0, top - _cfg.HaloReach); y <= Math.Min(y1 - 1, bottom + _cfg.HaloReach); y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
                     if (max < _cfg.MinBrightness) continue;
@@ -249,15 +337,16 @@ namespace LovelyCarDataCapture.Screen
         /// Colour of the light's brightest pixels. The dim halo around a light in game is a blend with
         /// the dark cockpit behind it, so averaging the whole blob would drag every colour towards black.
         /// </summary>
-        private LedColor MeasureColor(PixelFrame frame, LitBlob blob, int y0, int y1)
+        private LedColor MeasureColor(PixelFrame frame, LitBlob blob, int y0, int y1, int minBrightness)
         {
             var values = new List<int>();
             for (int x = blob.Left; x <= blob.Right; x++)
                 for (int y = y0; y < y1; y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                    if (max >= _cfg.MinBrightness && max - min >= _cfg.MinSaturation) values.Add(max);
+                    if (max >= minBrightness && max - min >= _cfg.MinSaturation) values.Add(max);
                 }
             if (values.Count == 0) return new LedColor(0, 0, 0);
             values.Sort();
@@ -267,9 +356,10 @@ namespace LovelyCarDataCapture.Screen
             for (int x = blob.Left; x <= blob.Right; x++)
                 for (int y = y0; y < y1; y++)
                 {
+                    if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                    if (max >= _cfg.MinBrightness && max - min >= _cfg.MinSaturation && max >= cut)
+                    if (max >= minBrightness && max - min >= _cfg.MinSaturation && max >= cut)
                     {
                         sr += r; sg += g; sb += b; n++;
                     }

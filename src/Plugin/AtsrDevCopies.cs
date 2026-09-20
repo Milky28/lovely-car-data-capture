@@ -40,13 +40,13 @@ namespace LovelyCarDataCapture.Plugin
         private static readonly object Gate = new object();
 
         public static string Folder(string simHubFolder) =>
-            Path.GetDirectoryName(AtsrCompatibility.DevelopmentFilePath(simHubFolder, "x"));
+            Path.GetDirectoryName(AtsrCompatibility.DevelopmentFilePath(simHubFolder, null, "x"));
 
         /// <summary>Writes an export to the folder and records it. Returns lines for the report.</summary>
         public static List<string> Write(CaptureSettings settings, string simHubFolder, string game, string carId, string json, Encoding encoding)
         {
             var lines = new List<string>();
-            var path = AtsrCompatibility.DevelopmentFilePath(simHubFolder, carId);
+            var path = AtsrCompatibility.DevelopmentFilePath(simHubFolder, game, carId);
             var name = Path.GetFileName(path);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             lock (Gate)
@@ -93,14 +93,14 @@ namespace LovelyCarDataCapture.Plugin
                         var name = Path.GetFileName(file);
                         if (settings.AtsrCopies.Any(c => Same(c.File, name))) continue;
                         var export = Directory.GetDirectories(outputFolder)
-                                              .Select(d => Path.Combine(d, name))
-                                              .FirstOrDefault(e => File.Exists(e) && File.ReadAllText(e) == File.ReadAllText(file));
+                                              .SelectMany(d => Directory.GetFiles(d, "*.json"))
+                                              .FirstOrDefault(e => IsMatchingExport(e, file, name));
                         if (export == null) continue;
                         settings.AtsrCopies.Add(new AtsrCopy
                         {
                             File = name,
                             Game = Path.GetFileName(Path.GetDirectoryName(export)),
-                            CarId = Path.GetFileNameWithoutExtension(name),
+                            CarId = CarProfile.Parse(File.ReadAllText(export)).CarId,
                             Written = File.GetLastWriteTime(file),
                         });
                         changed = true;
@@ -129,5 +129,17 @@ namespace LovelyCarDataCapture.Plugin
         }
 
         private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsMatchingExport(string export, string devFile, string devName)
+        {
+            if (!File.Exists(export) || File.ReadAllText(export) != File.ReadAllText(devFile)) return false;
+            try
+            {
+                var profile = CarProfile.Parse(File.ReadAllText(export));
+                var game = Path.GetFileName(Path.GetDirectoryName(export));
+                return Same(AtsrCompatibility.DevelopmentFileName(game, profile.CarId), devName);
+            }
+            catch { return false; }
+        }
     }
 }

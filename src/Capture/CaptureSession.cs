@@ -65,6 +65,9 @@ namespace LovelyCarDataCapture
         /// </summary>
         public bool SaveCaptureFrames { get; set; } = true;
 
+        /// <summary>Keep a small set of images around LED count and colour transitions for diagnosis.</summary>
+        public bool SaveTransitionFrames { get; set; }
+
         /// <summary>Show a panel over the game saying what the plugin is doing. Mapped buttons say nothing otherwise.</summary>
         public bool ShowOverlay { get; set; } = true;
         /// <summary>Where that panel sits, in screen pixels; drag it to move it. 0,0 places it top left of the main screen.</summary>

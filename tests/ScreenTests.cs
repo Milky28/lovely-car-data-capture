@@ -533,6 +533,346 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Report.Any(l => l.Contains("pooled")), "the report says the gears were pooled");
         }
 
+        private static void ScreenPoolingPreservesUnmeasuredValues()
+        {
+            var baseline = CarProfile.Parse(@"{""carName"":""audit"",""carId"":""audit"",""ledNumber"":2,
+                ""ledColor"":[""#FFFF0000"",""#FF00FF00"",""#FFFFFF00""],
+                ""ledRpm"":[{""1"":[7000,4900,6000],""2"":[7500,4900,6500],""3"":[8000,4900,6700]}]}");
+            var sr = new ScreenLedResult
+            {
+                Layout = new StripLayout(new double[] { 10, 30 }, new bool[2], 20),
+                Gears = new List<GearLedResult>
+                {
+                    new GearLedResult("1", new[] { new LedThreshold(5000, 4990, 5010), null }, null, 20),
+                    new GearLedResult("2", new[] { new LedThreshold(5000, 4990, 5010), null }, null, 20),
+                },
+            };
+            // Supply the measured result directly: the second light was visible for calibration,
+            // but never seen switching on. This test is about merging, not detecting that light.
+            var apply = typeof(ProfileComposer).GetMethod("ApplyScreen", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            foreach (var measuredRedline in new int?[] { null, 7200 })
+            {
+                sr.RedlineRpm = measuredRedline;
+                var p = baseline.Clone();
+                var notes = new List<string>();
+                apply.Invoke(null, new object[] { sr, new CaptureSettings(), p, baseline, notes, new List<string>() });
+                foreach (var gear in p.GearOrder)
+                {
+                    Equal(5000, p.LedRpm[gear][1], "measured LED pooled in gear " + gear);
+                    Equal(baseline.LedRpm[gear][2], p.LedRpm[gear][2], "unmeasured LED preserved in gear " + gear);
+                    Equal(measuredRedline ?? baseline.LedRpm[gear][0], p.LedRpm[gear][0], "redline in gear " + gear);
+                }
+                Check(notes.Any(n => n.Contains("pooled")), "pooling was exercised");
+            }
+            sr.RedlineByGear["1"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7100 };
+            sr.RedlineByGear["2"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7600 };
+            var perGear = baseline.Clone();
+            apply.Invoke(null, new object[] { sr, new CaptureSettings(), perGear, baseline, new List<string>(), new List<string>() });
+            Equal(7100, perGear.LedRpm["1"][0], "measured redline in first gear");
+            Equal(7600, perGear.LedRpm["2"][0], "measured redline in second gear");
+            Equal(8000, perGear.LedRpm["3"][0], "undriven gear keeps its redline");
+        }
+
+        private static void ScreenRestartWaitsForWorker()
+        {
+            using (var entered = new System.Threading.ManualResetEventSlim())
+            using (var release = new System.Threading.ManualResetEventSlim())
+            using (var restarted = new System.Threading.ManualResetEventSlim())
+            using (var loop = new LovelyCarDataCapture.Plugin.ScreenCaptureLoop())
+            {
+                int calls = 0;
+                loop.Target = () =>
+                {
+                    if (System.Threading.Interlocked.Increment(ref calls) == 1)
+                    {
+                        entered.Set();
+                        release.Wait();
+                    }
+                    else restarted.Set();
+                    return null; // Exercise the worker without taking a desktop screenshot.
+                };
+                System.Threading.Tasks.Task restart = null;
+                try
+                {
+                    loop.Start(new PixelRect(0, 0, 20, 10), 30);
+                    Check(entered.Wait(3000), "first worker entered its callback");
+                    restart = System.Threading.Tasks.Task.Run(() => loop.Start(new PixelRect(0, 0, 20, 10), 30));
+                    Check(!restart.Wait(800), "restart must not abandon a worker after 500 ms");
+                    Check(!restarted.IsSet, "second worker must not start while the first is blocked");
+                    release.Set();
+                    Check(restart.Wait(3000), "restart completes when the old writer finishes");
+                    Check(restarted.Wait(3000), "new worker started");
+                    loop.Stop();
+                    Check(!loop.IsRunning, "worker stopped");
+                    Equal("off", loop.Status, "stopped status stays off");
+                }
+                finally
+                {
+                    release.Set();
+                    restart?.Wait(3000);
+                    loop.Stop();
+                }
+            }
+        }
+
+        private sealed class ResetTelemetry : GameReaderCommon.StatusDataBase
+        {
+            public override object GetRawDataObject() => null;
+        }
+
+        private static void ScreenDetectorMercedesClusters()
+        {
+            // The saved capture-box image includes the tachometer graphic below seven four-dot clusters.
+            var blobs = new StripDetector().Detect(LoadFrame("ams2-mercedes-clk-lm-lit.png"), new PixelRect(0, 0, 660, 170));
+            Equal(7, blobs.Count, "seven clusters, not individual dots or the tachometer");
+            var centers = new[] { 52, 170, 250, 332, 413, 494, 612 };
+            for (int i = 0; i < centers.Length; i++)
+            {
+                Check(Math.Abs(blobs[i].CenterX - centers[i]) <= 5, "cluster " + (i + 1) + " position");
+                Check(blobs[i].Color.R > blobs[i].Color.G && blobs[i].Color.G > blobs[i].Color.B,
+                      "cluster " + (i + 1) + " remains orange");
+            }
+
+            // Early in a sweep only one cluster is lit. The tachometer still smears the ordinary pass.
+            var pixels = new byte[80 * 25 * 3];
+            for (int x = 0; x < 80; x++)
+                for (int y = 20; y < 25; y++)
+                {
+                    int p = (y * 80 + x) * 3;
+                    pixels[p] = 180; pixels[p + 1] = 100; pixels[p + 2] = 40;
+                }
+            for (int x = 10; x < 60; x++)
+                for (int y = 3; y < 15; y++)
+                {
+                    int p = (y * 80 + x) * 3;
+                    pixels[p] = 255; pixels[p + 1] = 140; pixels[p + 2] = 45;
+                }
+            var first = new StripDetector().Detect(PixelFrame.Rgb24(pixels, 80, 25), new PixelRect(0, 0, 80, 25));
+            Equal(1, first.Count, "the first cluster is found before the rest light up");
+        }
+
+        private static void ScreenRealPanozGearDisplay()
+        {
+            var session = new CaptureSession("Automobilista2", "Panoz Esperante GTR-1");
+            foreach (var f in LoadFrames(DataPath("ams2-panoz-esperante-gtr-1.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Equal(13, screen.Layout.LedNumber, "five lights on each side and three centre gaps");
+            Equal(3, screen.Layout.GapCount, "gear display is a gap");
+            Check(screen.Notes.Any(n => n.Contains("display between the rev lights")), "report explains the ignored display");
+            var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19)).Profile;
+            Equal("#00000000", profile.LedColor[7], "centre gear display is not a rev light");
+            Equal(0, profile.LedRpm["2"][7], "centre slot has no RPM threshold");
+            Check(Math.Abs(profile.LedRpm["2"][1] - 5500) <= 20, "first rev light remains measured");
+            Check(Math.Abs(profile.LedRpm["2"][13] - 5500) <= 20, "mirrored first rev light remains measured");
+        }
+
+        private static void ScreenRealCorvetteGearDisplay()
+        {
+            var session = new CaptureSession("Automobilista2", "Chevrolet Corvette C5-R");
+            foreach (var f in LoadFrames(DataPath("ams2-corvette-c5-r.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Equal(14, screen.Layout.LedNumber, "five lights on each side and four center gaps");
+            Equal(4, screen.Layout.GapCount, "gear display is excluded");
+            Check(screen.Notes.Any(n => n.Contains("display between the rev lights")), "report explains the excluded display");
+            var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19)).Profile;
+            for (int led = 6; led <= 9; led++)
+            {
+                Equal(0, profile.LedRpm["N"][led], "center gap " + led + " has no RPM threshold");
+                Equal("#00000000", profile.LedColor[led], "center gap " + led + " has no light color");
+            }
+            Check(Math.Abs(profile.LedRpm["N"][1] - 5800) <= 20, "first rev light remains measured");
+        }
+
+        private static void ScreenRealListerNoStripRedline()
+        {
+            var session = new CaptureSession("Automobilista2", "Lister Storm GTM");
+            foreach (var f in LoadFrames(DataPath("ams2-lister-storm-gtm.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19)).Profile;
+            Equal(5, profile.LedNumber, "five rev lights");
+            Equal("#00000000", profile.LedColor[0], "no measured strip-wide redline colour keeps the individual LED colours");
+            Equal("#FF00FF00", profile.LedColor[1], "outer LED stays green");
+            Equal("#FF00FFFF", profile.LedColor[2], "inner LED stays cyan");
+            Equal("#FFFF8000", profile.LedColor[3], "center LED is orange");
+            Check(Math.Abs(profile.LedRpm["N"][3] - 6090) <= 10, "center light comes on near 6090 rpm");
+        }
+
+        private static void ScreenRealPmrStormFlicker()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "Storm GT");
+            foreach (var f in LoadFrames(DataPath("pmr-storm-gt.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            var p = result.Profile;
+            Equal(5, p.LedNumber, "five rev lights");
+            var expected = new[] { 5500, 6090, 6695, 6090, 5500 };
+            foreach (var gear in p.GearOrder)
+                for (int i = 0; i < expected.Length; i++)
+                    Check(Math.Abs(p.LedRpm[gear][i + 1] - expected[i]) <= 20,
+                          "gear " + gear + " LED " + (i + 1) + " near " + expected[i]);
+            var colors = new[] { "#00000000", "#FF00FF00", "#FFFFFF00", "#FFFF0000", "#FFFFFF00", "#FF00FF00" };
+            for (int i = 0; i < colors.Length; i++) Equal(colors[i], p.LedColor[i], "color " + i);
+            Equal(0, result.AtsrProblems.Count, "no LED stays lit at idle");
+        }
+
+        private static void ScreenRealPmrStormMirroredOutlier()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "Storm GT");
+            foreach (var f in LoadFrames(DataPath("pmr-storm-gt-second.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Check(screen.DisplayLagMs >= 8 && screen.DisplayLagMs <= 20, "the game draws the lights about 12 ms after telemetry");
+            var p = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19)).Profile;
+            Check(Math.Abs(p.LedRpm["4"][2] - p.LedRpm["4"][4]) <= 5,
+                  "gear-4 yellow pair stays within 5 rpm despite one false late onset");
+            Check(Math.Abs(p.LedRpm["4"][4] - 6090) <= 20, "yellow pair lights near 6090 rpm");
+            Equal(p.LedRpm["4"][3], p.LedRpm["4"][0], "fallback redline follows the last real light");
+        }
+
+        private static void ScreenRealPmrS7MissingGears()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "S7R");
+            foreach (var f in LoadFrames(DataPath("pmr-s7r.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            var p = result.Profile;
+            Equal(4, p.LedNumber, "four rev lights");
+            Check(Math.Abs(p.LedRpm["3"][2] - 5700) <= 30, "third gear uses the second light measured in other gears");
+            Check(Math.Abs(p.LedRpm["4"][4] - 6490) <= 30, "fourth gear uses the last light measured in other gears");
+            Equal("#FF00FF00", p.LedColor[1], "first S7 light is green, not cyan");
+            Equal(0, result.AtsrProblems.Count, "no LED stays lit at idle");
+
+            var close = new CaptureSession("ProjectMotorRacing", "S7R");
+            foreach (var f in LoadFrames(DataPath("pmr-s7r-close-seat.frames.csv")))
+                close.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var closer = ProfileComposer.Compose(close, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            Equal("#FF00FF00", closer.Profile.LedColor[1], "first light stays green at the closer camera position");
+            Equal(0, closer.AtsrProblems.Count, "closer capture also has no lights stuck on");
+        }
+
+        private static void ScreenRealPmrAstonGte()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "AMR Vantage GTE");
+            foreach (var f in LoadFrames(DataPath("pmr-amr-vantage-gte.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            var p = result.Profile;
+            Equal(8, p.LedNumber, "eight rev lights");
+            foreach (var gear in p.GearOrder)
+                Check(p.LedRpm[gear][1] >= 5750 && p.LedRpm[gear][1] <= 5830, "gear " + gear + " first light near 5800 rpm");
+            var colors = new[] { "#00000000", "#FF00FF00", "#FF00FF00", "#FFFF0000", "#FFFF0000",
+                                 "#FF0000FF", "#FF0000FF", "#FF0000FF", "#FF0000FF" };
+            for (int i = 0; i < colors.Length; i++) Equal(colors[i], p.LedColor[i], "Aston color " + i);
+            Equal(0, result.AtsrProblems.Count, "no LED stays lit at idle");
+        }
+
+        private static void ScreenRealPmrBmwGt3Pairs()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "M4 GT3 EVO");
+            foreach (var f in LoadFrames(DataPath("pmr-m4-gt3-evo.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            var p = result.Profile;
+            Equal(12, p.LedNumber, "12 positions, including two gaps");
+            foreach (var gear in p.GearOrder)
+            {
+                var row = p.LedRpm[gear];
+                for (int left = 1; left <= 6; left++) Equal(row[left], row[13 - left], "gear " + gear + " pair " + left);
+                Check(Math.Abs(row[2] - 6045) <= 20, "gear " + gear + " second green pair ignores neutral's late reading");
+                Check(Math.Abs(row[4] - 6340) <= 20, "gear " + gear + " first yellow pair near 6340 rpm");
+                Check(Math.Abs(row[5] - 6685) <= 20, "gear " + gear + " second yellow pair near 6685 rpm");
+            }
+            Equal(0, result.AtsrProblems.Count, "ATSR recognizes the symmetric layout");
+
+            var repeat = new CaptureSession("ProjectMotorRacing", "M4 GT3 EVO");
+            foreach (var f in LoadFrames(DataPath("pmr-m4-gt3-evo-second.frames.csv")))
+                repeat.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            Equal(0, repeat.Screen.Result().DisplayLagMs, "a 154 rpm residual rejects the false 246 ms delay");
+            var again = ProfileComposer.Compose(repeat, new CaptureSettings(), null, new DateTime(2026, 9, 19));
+            var second = again.Profile;
+            Equal("#FFFFFF00", second.LedColor[5], "second capture's first yellow light stays yellow");
+            Equal("#FFFFFF00", second.LedColor[8], "second capture's paired yellow stays yellow");
+            foreach (var gear in second.GearOrder)
+            {
+                var row = second.LedRpm[gear];
+                for (int left = 1; left <= 6; left++) Equal(row[left], row[13 - left], "second capture gear " + gear + " pair " + left);
+                Check(Math.Abs(row[4] - 6330) <= 35, "second capture first yellow pair remains near the confirmed RPM");
+            }
+            Equal(0, again.AtsrProblems.Count, "second capture keeps ATSR compatibility");
+        }
+
+        private static void ScreenRealMercedesClusters()
+        {
+            var session = new CaptureSession("Automobilista2", "Mercedes-Benz CLK LM");
+            foreach (var f in LoadFrames(DataPath("ams2-mercedes-clk-lm.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = session.Screen.Result();
+            Equal(7, result.Layout.LedNumber, "each four-dot cluster is one light");
+            Check(result.SteadyAtLimiterRpm.HasValue, "the held limiter has no light effect");
+            var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19)).Profile;
+            Equal("#00000000", profile.LedColor[0], "the strip keeps its own color at the limiter");
+            Check(Math.Abs(profile.LedRpm["N"][0] - 9240) <= 30, "redline near 9240 rpm");
+            var expected = new[] { 8670, 8125, 8230, 8340, 8450, 8560, 8670 };
+            for (int i = 0; i < expected.Length; i++)
+                Check(Math.Abs(profile.LedRpm["N"][i + 1] - expected[i]) <= 20,
+                      "cluster " + (i + 1) + " near " + expected[i] + " rpm");
+        }
+
+        private static void SnapshotSavesCaptureBoxPixels()
+        {
+            var pixels = new byte[4 * 2 * 4];
+            // BGRA red at screen coordinate 101, 201, surrounded by black.
+            pixels[(4 + 1) * 4 + 2] = 255;
+            pixels[(4 + 1) * 4 + 3] = 255;
+            var shot = new LovelyCarDataCapture.Plugin.DesktopSnapshot
+            {
+                Frame = PixelFrame.Bgra32(pixels, 4, 2), Left = 100, Top = 200,
+            };
+            string path = Path.Combine(Path.GetTempPath(), "capture-box-" + Guid.NewGuid().ToString("N") + ".png");
+            try
+            {
+                shot.SaveRegion(path, new PixelRect(101, 201, 2, 1));
+                using (var image = new Bitmap(path))
+                {
+                    Equal(2, image.Width, "saved width");
+                    Equal(1, image.Height, "saved height");
+                    Equal(System.Drawing.Color.FromArgb(255, 255, 0, 0), image.GetPixel(0, 0), "selected pixel");
+                }
+            }
+            finally { if (File.Exists(path)) File.Delete(path); }
+        }
+
+        private static void ResetStopsCapture()
+        {
+            var plugin = new CapturePlugin { Settings = new CaptureSettings { ShowOverlay = false } };
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var capturing = typeof(CapturePlugin).GetField("_capturing", flags);
+            var session = typeof(CapturePlugin).GetField("_session", flags);
+            var screen = (LovelyCarDataCapture.Plugin.ScreenCaptureLoop)typeof(CapturePlugin).GetField("_screen", flags).GetValue(plugin);
+            capturing.SetValue(plugin, true);
+            session.SetValue(plugin, new CaptureSession("Automobilista2", "audit"));
+            try
+            {
+                screen.Start(new PixelRect(0, 0, 20, 10), 30);
+                plugin.ResetCapture();
+                Equal(false, (bool)capturing.GetValue(plugin), "reset disarms telemetry capture");
+                Check(session.GetValue(plugin) == null, "reset clears the session");
+                Check(!screen.IsRunning, "reset stops the screen worker");
+                // SimHub alone can set these properties in production; provide a live car frame here.
+                var frame = new ResetTelemetry();
+                typeof(GameReaderCommon.StatusDataBase).GetProperty("CarId").SetValue(frame, "audit");
+                typeof(GameReaderCommon.StatusDataBase).GetProperty("Gear").SetValue(frame, "1");
+                typeof(GameReaderCommon.StatusDataBase).GetProperty("Rpms").SetValue(frame, 5000.0);
+                var data = new GameReaderCommon.GameData { GameName = "Automobilista2", NewData = frame };
+                typeof(GameReaderCommon.GameData).GetProperty("GameRunning").SetValue(data, true);
+                plugin.DataUpdate(null, ref data);
+                Check(session.GetValue(plugin) == null, "new telemetry does not restart a reset capture");
+            }
+            finally { screen.Stop(); }
+        }
+
         /// <summary>
         /// The AMS2 BMW M8 GTE case: above the redline the strip blinks - dark 100 ms, lit 100 ms - and
         /// keeps its own colours while it does. Held at the limiter for seconds at 60 fps, the blinks'

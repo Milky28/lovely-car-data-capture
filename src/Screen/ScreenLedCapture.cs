@@ -411,17 +411,37 @@ namespace LovelyCarDataCapture.Screen
             int lowest = _samples.Min(s => s.Rpm), highest = _samples.Max(s => s.Rpm);
             double idle = lowest + (highest - lowest) * 0.1;
             int idleFrames = _samples.Count(s => s.Rpm <= idle);
+            // A dashboard display can be bright and saturated, unlike the pale SC63 reflection.
+            // The Panoz gear digit is lit in nearly every idle frame, between two rev-light banks.
+            // Its two changing strokes occupy nearby columns, so treat them as one fixture.
+            var idleSamples = _samples.Where(s => s.Rpm <= idle).ToList();
+            // Pale reflections are removed by color below. Promoting them to position-only
+            // fixtures would also remove a real saturated LED beside the moving LMU reflection.
+            var persistent = idleSamples.SelectMany(s => s.X.Where((x, b) => s.Colors[b].Saturation >= PaleSaturation)).Distinct()
+                .Where(x => idleSamples.Count(s => s.X.Where((p, b) => s.Colors[b].Saturation >= PaleSaturation)
+                    .Any(p => Math.Abs(p - x) <= FixtureReachPx)) >= idleFrames * 0.75)
+                .ToList();
+            // The C5-R's gear digit is intermittent at idle, but it is the only thing ever lit
+            // below half the highest RPM. An idle animation lights positions across the strip.
+            var lowPositions = _samples.Where(s => s.Rpm < highest * IdleShare)
+                .SelectMany(s => s.X.Where((x, b) => s.Colors[b].Saturation >= PaleSaturation)).ToList();
+            if (lowPositions.Count >= 10 && lowPositions.Max() - lowPositions.Min() <= FixtureReachPx * 2)
+                persistent.AddRange(lowPositions.Distinct());
+            var highPositions = _samples.Where(s => s.Rpm > highest * IdleShare).SelectMany(s => s.X).Distinct().ToList();
+            persistent = persistent.Where(x => highPositions.Count(p => p < x - FixtureReachPx * 2) >= 3 &&
+                                                 highPositions.Count(p => p > x + FixtureReachPx * 2) >= 3).ToList();
             var pale = _samples.Where(s => s.Rpm <= idle)
                                .SelectMany(s => s.X.Where((x, b) => s.Colors[b].Saturation < PaleSaturation))
                                .ToList();
-            if (pale.Count < Math.Max(5, idleFrames * 0.2)) return false;
+            if (pale.Count < Math.Max(5, idleFrames * 0.2) && persistent.Count == 0) return false;
 
-            bool Fixture(double x) => pale.Count(p => Math.Abs(p - x) <= FixtureReachPx) >= 5;
+            bool Fixture(double x, LedColor color) => persistent.Any(p => Math.Abs(p - x) <= FixtureReachPx) ||
+                color.Saturation < PaleSaturation && pale.Count(p => Math.Abs(p - x) <= FixtureReachPx) >= 5;
             int dropped = 0;
             for (int i = 0; i < _samples.Count; i++)
             {
                 var s = _samples[i];
-                var keep = Enumerable.Range(0, s.X.Length).Where(b => s.Colors[b].Saturation >= PaleSaturation || !Fixture(s.X[b])).ToList();
+                var keep = Enumerable.Range(0, s.X.Length).Where(b => !Fixture(s.X[b], s.Colors[b])).ToList();
                 if (keep.Count == s.X.Length) continue;
                 dropped += s.X.Length - keep.Count;
                 s.X = keep.Select(b => s.X[b]).ToArray();
@@ -429,8 +449,8 @@ namespace LovelyCarDataCapture.Screen
                 _samples[i] = s;
             }
             if (dropped == 0) return false;
-            result.Notes.Add("Something pale and bright in the box was lit even at idle, so it isn't a light - a reflection or a " +
-                             "display. It was ignored (" + dropped + " sightings). A tighter box round the lights avoids it.");
+            result.Notes.Add((persistent.Count > 0 ? "A display between the rev lights" : "Something pale and bright in the box") +
+                             " was lit even at idle, so it isn't a light. It was ignored (" + dropped + " sightings).");
             return true;
         }
 
@@ -593,20 +613,78 @@ namespace LovelyCarDataCapture.Screen
                     Add(fallingByGear, _samples[i].Gear, at);
                 }
             }
-            foreach (var gear in risingByGear.Keys.Union(fallingByGear.Keys))
+
+            // Some cars begin their redline flash with a dark phase, then show the new colour.
+            // The dark phase can span more than MaxCrossingStepRpm while the revs rise, so its
+            // beginning is the useful edge. Only use the first confirmed dark phase in a gear:
+            // later phases are limiter cycles, and a dark gap that returns to own colours is not
+            // a colour change. A full strip and a clear normal run keep missing frames and an
+            // incomplete gear segment from becoming an onset.
+            var initialDarkByGear = new Dictionary<string, Tuple<double, int, int>>();
+            var seenRedline = new HashSet<string>();
+            bool FullStrip(int index) => lit[index].Count(v => v) >= lights - 1;
+            for (int i = 0; i < _samples.Count; )
+            {
+                string gear = _samples[i].Gear;
+                if (redline[i] == true)
+                {
+                    seenRedline.Add(gear);
+                    i++;
+                    continue;
+                }
+                if (redline[i].HasValue || lit[i].Any(v => v) || seenRedline.Contains(gear))
+                {
+                    i++;
+                    continue;
+                }
+
+                int start = i;
+                while (i < _samples.Count && _samples[i].Gear == gear && !redline[i].HasValue &&
+                       !lit[i].Any(v => v) && _samples[i].TimeMs - _samples[start].TimeMs <= DarkBridgeMs)
+                    i++;
+                int end = i;
+                if (end - start < MinBlinkFrames || start == 0 || end >= _samples.Count ||
+                    seenRedline.Contains(gear) || _samples[start - 1].Gear != gear ||
+                    _samples[end].Gear != gear || redline[start - 1] != false || redline[end] != true ||
+                    !FullStrip(start - 1) || _samples[start].Rpm < _samples[start - 1].Rpm ||
+                    _samples[end].Rpm < _samples[start].Rpm ||
+                    _samples[start].Rpm - _samples[start - 1].Rpm > MaxCrossingStepRpm ||
+                    !Clear(start - 1, -1))
+                    continue;
+
+                initialDarkByGear[gear] = Tuple.Create(
+                    (_samples[start - 1].Rpm + _samples[start].Rpm) / 2.0,
+                    _samples[start - 1].Rpm, _samples[start].Rpm);
+            }
+            foreach (var gear in risingByGear.Keys.Union(fallingByGear.Keys).Union(initialDarkByGear.Keys))
             {
                 double? gUp = risingByGear.TryGetValue(gear, out var r) ? Median(r) : (double?)null;
                 double? gDown = fallingByGear.TryGetValue(gear, out var f) ? Median(f) : (double?)null;
-                double g = gUp.HasValue && gDown.HasValue ? (gUp.Value + gDown.Value) / 2 : (gUp ?? gDown.Value);
+                initialDarkByGear.TryGetValue(gear, out var initialDark);
+                if (!gUp.HasValue && !gDown.HasValue && !initialDarkByGear.ContainsKey(gear)) continue;
+                double g = gUp.HasValue && gDown.HasValue ? (gUp.Value + gDown.Value) / 2 :
+                    (gUp ?? gDown ?? initialDark.Item1);
+                int highestBelow = (int)Math.Round(Math.Min(gUp ?? g, gDown ?? g));
+                int lowestAbove = (int)Math.Round(Math.Max(gUp ?? g, gDown ?? g));
+                if (initialDark != null)
+                {
+                    // A later falling colour crossing measures release behaviour. It cannot move
+                    // a directly observed initial flash boundary on the way up.
+                    g = initialDark.Item1;
+                    highestBelow = initialDark.Item2;
+                    lowestAbove = initialDark.Item3;
+                    result.Notes.Add("Gear " + gear + ": the redline flash began with a dark phase at about " +
+                                     RoundTo(g, 5) + " rpm, before the strip changed colour.");
+                }
                 result.RedlineByGear[gear] = new GearRedline
                 {
                     Rpm = RoundTo(g, 5),
-                    HighestBelow = (int)Math.Round(Math.Min(gUp ?? g, gDown ?? g)),
-                    LowestAbove = (int)Math.Round(Math.Max(gUp ?? g, gDown ?? g)),
+                    HighestBelow = highestBelow,
+                    LowestAbove = lowestAbove,
                 };
             }
             FindFlash(redline, result);
-            if (risingAt.Count == 0 && fallingAt.Count == 0)
+            if (risingAt.Count == 0 && fallingAt.Count == 0 && initialDarkByGear.Count == 0)
             {
                 // A strip that blinks has shown where its redline is anyway; saying the limiter was never
                 // reached would contradict the next note.
@@ -616,7 +694,8 @@ namespace LovelyCarDataCapture.Screen
                 return;
             }
 
-            double? up = risingAt.Count > 0 ? Median(risingAt) : (double?)null;
+            double? up = risingAt.Count > 0 ? Median(risingAt) : initialDarkByGear.Count > 0
+                ? Median(initialDarkByGear.Values.Select(v => v.Item1).ToList()) : (double?)null;
             double? down = fallingAt.Count > 0 ? Median(fallingAt) : (double?)null;
             double estimate = up.HasValue && down.HasValue ? (up.Value + down.Value) / 2 : (up ?? down.Value);
             result.RedlineRpm = RoundTo(estimate, 5);
@@ -870,6 +949,15 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Longest display lag looked for, in milliseconds.</summary>
         private const int MaxLagMs = 250;
 
+        /// <summary>At least three matched LED/gear pairs are needed to attempt a delay fit.</summary>
+        private const int MinLagLights = 3;
+
+        /// <summary>A late chance fit must retain at least half the strongest matched-light evidence.</summary>
+        private const double MinLagEvidenceFraction = 0.5;
+
+        /// <summary>Real captures fitted within 9 rpm; a 154 rpm BMW fit at the search limit was spurious.</summary>
+        private const int MaxLagFitRpm = 50;
+
         /// <summary>
         /// Widest gap between a light's switch-on and switch-off that still counts as the same light
         /// seen late. PMR shows its lights about 80 ms behind the revs, which in neutral, with the revs
@@ -903,6 +991,12 @@ namespace LovelyCarDataCapture.Screen
                 if (best > 0) break;
             }
             if (best == 0) return;
+            if (bestGap > MaxLagFitRpm)
+            {
+                _lagNotes.Add("The switch-on and switch-off readings disagreed too much to measure display delay, " +
+                              "so no delay correction was used. Try a smooth climb and release in one gear.");
+                return;
+            }
             // How far off the raw readings were, for the report: every light, however far apart.
             var unshifted = SwitchGaps(lit, blink, Shifted(0), int.MaxValue);
             if (unshifted.Count > 0) noLagGap = Median(unshifted);
@@ -915,10 +1009,16 @@ namespace LovelyCarDataCapture.Screen
                 _samples[i] = s;
             }
             result.DisplayLagMs = best;
-            _lagNotes.Add("The game shows its lights about " + best + " ms after its revs, so every light read about " +
-                          (int)Math.Round(noLagGap / 2) + " rpm high switching on and as much low switching off. Each frame " +
-                          "was read against the revs " + best + " ms earlier, which brings the two within " +
-                          (int)Math.Round(bestGap) + " rpm (" + lights + " lights seen both ways).");
+            if (noLagGap < 0)
+                _lagNotes.Add("The game shows its lights about " + best + " ms after its revs. Some missed lights made the " +
+                              "uncorrected switch-on and switch-off readings noisy. Each frame was read against the revs " +
+                              best + " ms earlier; those readings then differed by about " + (int)Math.Round(bestGap) +
+                              " rpm (" + lights + " lights seen both ways).");
+            else
+                _lagNotes.Add("The game shows its lights about " + best + " ms after its revs, so every light read about " +
+                              (int)Math.Round(noLagGap / 2) + " rpm high switching on and as much low switching off. Each frame " +
+                              "was read against the revs " + best + " ms earlier, which brings the two within " +
+                              (int)Math.Round(bestGap) + " rpm (" + lights + " lights seen both ways).");
         }
 
         /// <summary>Tries each delay in turn and returns the one where switching on and off agree best.</summary>
@@ -928,16 +1028,32 @@ namespace LovelyCarDataCapture.Screen
             lights = 0;
             bestGap = double.MaxValue;
             noLagGap = double.NaN;
+            var fits = new List<Tuple<int, double, double, int>>();
+            int mostLights = 0;
             for (int lag = 0; lag <= MaxLagMs; lag += 2)
             {
                 var gaps = SwitchGaps(lit, blink, Shifted(lag), limit);
-                if (gaps.Count < MinFalls) continue;   // too few lights seen both ways to tell at this delay
-                double signed = Median(gaps), gap = Math.Abs(signed);
+                if (gaps.Count < MinLagLights) continue;   // too little independent evidence to identify a delay
+                double signed = Median(gaps);
+                // A signed median lets equal and opposite bad readings cancel. The median of
+                // absolute residuals keeps the fit robust to one stray light without hiding
+                // disagreement between the lights that support it.
+                double gap = Median(gaps.Select(Math.Abs).ToList());
                 if (double.IsNaN(noLagGap)) noLagGap = signed;
-                if (gap < bestGap - 0.5) { bestGap = gap; best = lag; lights = gaps.Count; }
-                // Past the delay where they agree, on and off only drift further apart the other way; a
-                // wide search mustn't find a chance agreement among a few lights much later.
-                else if (signed < 0) break;
+                fits.Add(Tuple.Create(lag, gap, signed, gaps.Count));
+                if (gaps.Count > mostLights) mostLights = gaps.Count;
+            }
+
+            int requiredLights = Math.Max(MinLagLights, (int)Math.Ceiling(mostLights * MinLagEvidenceFraction));
+            foreach (var fit in fits)
+            {
+                if (fit.Item4 < requiredLights) continue;
+                if (fit.Item2 < bestGap - 0.5)
+                {
+                    bestGap = fit.Item2;
+                    best = fit.Item1;
+                    lights = fit.Item4;
+                }
             }
             if (double.IsNaN(noLagGap)) noLagGap = 0;
             return best;

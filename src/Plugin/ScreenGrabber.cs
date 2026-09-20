@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using LovelyCarDataCapture.Capture;
 using LovelyCarDataCapture.Screen;
 
 namespace LovelyCarDataCapture.Plugin
@@ -25,7 +26,18 @@ namespace LovelyCarDataCapture.Plugin
         /// <summary>Copies the region and returns it, or null when it can't be read (locked screen, bad region).</summary>
         public PixelFrame Grab(PixelRect region, out string problem)
         {
+            long ignored;
+            return Grab(region, out problem, out ignored);
+        }
+
+        /// <summary>
+        /// Copies the region and returns an acquisition estimate centred on the desktop copy. The
+        /// timestamp intentionally excludes bitmap locking, byte copying, and detector runtime.
+        /// </summary>
+        public PixelFrame Grab(PixelRect region, out string problem, out long acquiredAtMs)
+        {
             problem = null;
+            acquiredAtMs = CaptureClock.NowMilliseconds;
             if (region.Width < 8 || region.Height < 4)
             {
                 problem = "the capture box is too small";
@@ -45,7 +57,12 @@ namespace LovelyCarDataCapture.Plugin
                     _buffer = null;
                 }
 
+                long copyStarted = CaptureClock.NowMilliseconds;
                 _graphics.CopyFromScreen(region.X, region.Y, 0, 0, new Size(region.Width, region.Height), CopyPixelOperation.SourceCopy);
+                long copyFinished = CaptureClock.NowMilliseconds;
+                // Stopwatch resolution is intentionally coarse here; midpoint still removes the
+                // variable LockBits/Marshal.Copy time from the timestamp used for telemetry pairing.
+                acquiredAtMs = copyStarted + (copyFinished - copyStarted) / 2;
 
                 var data = _bitmap.LockBits(new Rectangle(0, 0, _width, _height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
                 try

@@ -27,8 +27,13 @@ namespace LovelyCarDataCapture.Profile
         private const string Yellow = "#FFFFFF00";
         private const string Red = "#FFFF0000";
         private const string Blue = "#FF0000FF";
+        // Mirrored lights with the same onset can render a few degrees apart in PMR's dim green glow.
+        private const double MirrorColourDegrees = 12;
+        // A mirrored pair agreeing this closely in several gears can expose one false late onset.
+        private const int MirrorRpm = 30;
 
-        public static ComposeResult Compose(CaptureSession s, CaptureSettings cfg, RepoLookup lookup, DateTime capturedAt)
+        public static ComposeResult Compose(CaptureSession s, CaptureSettings cfg, RepoLookup lookup, DateTime capturedAt,
+            string localOverrides = null, string previousExport = null)
         {
             var result = new ComposeResult();
             var notes = new List<string>();
@@ -67,6 +72,8 @@ namespace LovelyCarDataCapture.Profile
             var p = baseline?.Clone() ?? NewProfile(s, cfg, newLeds, f1, notes);
             p.Normalize();
             var screenGears = screen ? screenResult.Gears.Select(g => g.Gear) : new string[0];
+            var capturedGears = (f1 ? s.F1.Gears : iracing ? s.IRacing.Gears : screen ? screenGears :
+                manual ? s.Marks.Gears : s.Redline.Gears.Keys).Distinct().ToList();
             foreach (var gear in s.Redline.Gears.Keys.Concat(s.F1.Gears).Concat(s.IRacing.Gears).Concat(screenGears).Concat(manual ? s.Marks.Gears : new string[0]).Distinct().ToList())
             {
                 if (baseline != null && !p.GearOrder.Contains(gear)) notes.Add("Gear " + gear + " isn't in the repo file; it was added.");
@@ -79,10 +86,44 @@ namespace LovelyCarDataCapture.Profile
             else if (manual) ApplyManualMarks(s, p, baseline, notes, details);
             else ApplyRedlineOnly(s, cfg, p, baseline, notes, details);
 
+            var overrideResult = LocalProfileOverrides.Apply(p, s.GameName, s.CarId, localOverrides, notes);
+            var previousGears = new List<string>();
+            if (!(screen && cfg.CopyMeasuredToOtherGears))
+            {
+                previousGears = PreviousCaptureRpm.Restore(p, s.CarId, previousExport, capturedGears, notes,
+                    screen && screenResult.Layout.LedNumber == p.LedNumber ? screenResult.Layout.IsGap : null);
+            }
+            if (screen && screenResult.Layout.LedNumber == p.LedNumber)
+            {
+                // ATSR needs a black color as well as RPM 0 for a gap. Do this after pooling and
+                // restoring old gears, which can otherwise bring back the repo's lit gap slots.
+                var gaps = Enumerable.Range(0, p.LedNumber).Where(i => screenResult.Layout.IsGap[i]).Select(i => i + 1).ToList();
+                bool changed = gaps.Any(i => !LedLayout.IsGapColor(p.LedColor[i]) || p.LedRpm.Values.Any(row => row[i] != 0));
+                foreach (int slot in gaps)
+                {
+                    p.LedColor[slot] = "#00000000";
+                    foreach (var row in p.LedRpm.Values) row[slot] = 0;
+                }
+                if (changed) notes.Add("Screen gaps at LED " + string.Join(", ", gaps) +
+                    " were set to black with RPM 0 in every gear, so ATSR leaves them off.");
+            }
+            if (screen)
+            {
+                AddFinalScreenNotes(screenResult, p, baseline, new HashSet<string>(previousGears), notes);
+                AddFinalBlinkNote(screenResult, p, baseline, overrideResult, notes);
+            }
+            if (screen && baseline != null && screenResult.Layout.LedNumber == p.LedNumber)
+                AddFinalColorNotes(screenResult, p, overrideResult, notes);
+            if (screen && !cfg.CopyMeasuredToOtherGears)
+                ReportUndrivenDifference(p, screenResult, notes);
+
             if (sim == "lmu")
                 notes.Add("LMU files in the repo are generated from the templates in src_data/lmu by scripts/build_profiles.py; put these values in the matching template rather than submitting data/lmu directly.");
             if (lookup != null && lookup.SameCarId.Count > 0)
                 notes.Add("Other repo files use the same carId: " + string.Join(", ", lookup.SameCarId.Select(x => "data/" + x)) + ".");
+
+            bool captureApplied = f1 ? p.LedNumber == LedWindowCapture.F1LedCount : iracing || manual;
+            if (screen) captureApplied = screenResult.Layout != null && p.LedNumber == screenResult.Layout.LedNumber;
 
             result.Profile = p;
             var r = result.Report;
@@ -97,6 +138,11 @@ namespace LovelyCarDataCapture.Profile
             r.Add("");
             r.Add("Changes compared with " + (baseline != null ? "the repo file:" : "an empty file (this is a new car):"));
             r.AddRange(DescribeChanges(baseline, p).Select(x => "  " + x));
+            r.Add("");
+            r.Add("Final value sources:");
+            r.AddRange(DescribeFinalSources(p, baseline, capturedGears, previousGears, overrideResult,
+                                            cfg.CopyMeasuredToOtherGears, captureApplied, screen, screenResult)
+                .Select(x => "  " + x));
             if (notes.Count > 0)
             {
                 r.Add("");
@@ -140,9 +186,9 @@ namespace LovelyCarDataCapture.Profile
                 var row = p.LedRpm[gr.Gear];
                 for (int i = 0; i < gr.Leds.Length; i++)
                 {
-                    if (gr.Leds[i] != null) row[i + 1] = gr.Leds[i].Rpm;
+                    if (Trusted(gr.Leds[i])) row[i + 1] = gr.Leds[i].Rpm;
                 }
-                int lastLit = gr.Leds.Where(l => l != null).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
+                int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
                 if (gr.FlashStart.HasValue) row[0] = gr.FlashStart.Value;
                 else if (row[0] < lastLit)
                 {
@@ -156,12 +202,13 @@ namespace LovelyCarDataCapture.Profile
                     notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", missing) + " never lit; " +
                               (baseline != null ? "kept the repo values." : "left at 0.") + " Rev higher in this gear to capture them.");
                 }
-                var inconsistent = gr.Leds.Select((l, i) => new { l, i }).Where(x => x.l != null && x.l.Inconsistent).Select(x => x.i + 1).ToList();
-                if (inconsistent.Count > 0)
-                    notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", inconsistent) + " switched off above an RPM where it was lit. Values may be off; see the table.");
+                var loose = gr.Leds.Select((l, i) => new { l, i }).Where(x => x.l != null && !Trusted(x.l)).Select(x => x.i + 1).ToList();
+                if (loose.Count > 0)
+                    notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", loose) + " measured too loosely to use; " +
+                              (baseline != null ? "kept the repo values." : "left at 0.") + " Rev slowly from below these lights again.");
             }
 
-            FillUndrivenGears(p, baseline, results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
+            FillUndrivenGears(p, baseline, results.Where(r => r.Leds.Any(Trusted)).OrderByDescending(r => r.Leds.Count(Trusted)).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault(),
                 s.F1.Gears.ToList(), notes, "F1 cars normally use the same lights in every gear.");
         }
 
@@ -219,19 +266,12 @@ namespace LovelyCarDataCapture.Profile
             foreach (var gr in results)
             {
                 var row = p.LedRpm[gr.Gear];
-                var loose = new List<string>();
                 for (int i = 0; i < gr.Leds.Length; i++)
                 {
                     if (layout.IsGap[i]) { row[i + 1] = 0; continue; }
                     if (gr.Leds[i] == null) continue;
                     if (Trusted(gr.Leds[i])) row[i + 1] = gr.Leds[i].Rpm;
-                    else loose.Add((i + 1).ToString(CultureInfo.InvariantCulture));
                 }
-                if (loose.Count > 0)
-                    notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", loose) +
-                              " only ever seen already lit, or measured too loosely to use; " +
-                              (baseline != null ? "kept the repo values." : "left at 0.") +
-                              " Rev up from below them in this gear, smoothly.");
                 int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
                 // This gear's own redline where it had one: some cars move it with the gear.
                 int? redline = sr.RedlineByGear.TryGetValue(gr.Gear, out var own) ? own.Rpm : sr.RedlineRpm;
@@ -255,14 +295,30 @@ namespace LovelyCarDataCapture.Profile
                     notes.Add("Gear " + gr.Gear + ": no redline color change was seen, so the redline was set to the last light's RPM. Hold the limiter briefly to capture it.");
                 }
 
-                {
-                    var missing = Enumerable.Range(0, gr.Leds.Length).Where(i => !layout.IsGap[i] && gr.Leds[i] == null)
-                                            .Select(i => (i + 1).ToString(CultureInfo.InvariantCulture)).ToList();
-                    if (missing.Count > 0)
-                        notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", missing) + " never lit; " +
-                                  (baseline != null ? "kept the repo values." : "left at 0.") + " Rev higher in this gear to capture them.");
-                }
             }
+
+            if (baseline == null)
+                for (int left = 1; left <= layout.LedNumber / 2; left++)
+                {
+                    int right = layout.LedNumber + 1 - left;
+                    var measured = results.Where(g => Trusted(g.Leds[left - 1]) && Trusted(g.Leds[right - 1])).ToList();
+                    var matched = measured.Where(g => Math.Abs(g.Leds[left - 1].Rpm - g.Leds[right - 1].Rpm) <= MirrorRpm).ToList();
+                    if (matched.Count < 3 || matched.Count < measured.Count - 1) continue;
+                    int usual = Median(matched.Select(g => (g.Leds[left - 1].Rpm + g.Leds[right - 1].Rpm) / 2).ToList());
+                    foreach (var g in measured.Except(matched))
+                    {
+                        int a = g.Leds[left - 1].Rpm, b = g.Leds[right - 1].Rpm;
+                        if (Math.Abs(a - b) <= UniformRpm) continue;
+                        bool leftFits = Math.Abs(a - usual) <= UniformRpm;
+                        bool rightFits = Math.Abs(b - usual) <= UniformRpm;
+                        if (leftFits == rightFits) continue;
+                        var row = p.LedRpm[g.Gear];
+                        row[leftFits ? right : left] = leftFits ? a : b;
+                        if (!sr.RedlineRpm.HasValue && !sr.SteadyAtLimiterRpm.HasValue)
+                            row[0] = row.Skip(1).Max();
+                        notes.Add("Gear " + g.Gear + ": LED " + (leftFits ? right : left) + " was measured far from its mirrored partner and the other gears, so it uses the partner's RPM.");
+                    }
+                }
 
             // The lights come on in a fixed order, so a row that doesn't is wrong however tight its
             // windows looked: a gear caught mid-shift can produce one.
@@ -283,27 +339,12 @@ namespace LovelyCarDataCapture.Profile
             }
 
             ApplyScreenColors(sr, p, baseline, notes);
+            if (sr.BlinkIntervalMs.HasValue && (baseline == null || p.RedlineBlinkInterval == 0))
+                p.RedlineBlinkInterval = sr.BlinkIntervalMs.Value;
 
-            if (sr.BlinkIntervalMs.HasValue)
-            {
-                if (baseline == null || p.RedlineBlinkInterval == 0)
-                {
-                    p.RedlineBlinkInterval = sr.BlinkIntervalMs.Value;
-                    notes.Add("The strip blinked above the redline with a dark phase of about " + sr.BlinkIntervalMs +
-                              " ms, so redlineBlinkInterval was set to that. Check it looks right on the wheel.");
-                }
-                else if (Math.Abs(p.RedlineBlinkInterval - sr.BlinkIntervalMs.Value) > 25)
-                    notes.Add("The blink measured about " + sr.BlinkIntervalMs + " ms but the repo file says " +
-                              p.RedlineBlinkInterval + "; it was left alone.");
-                else
-                    notes.Add("The blink measured about " + sr.BlinkIntervalMs + " ms, matching the repo file's " +
-                              p.RedlineBlinkInterval + ".");
-            }
-            else if (sr.RedlineRpm.HasValue && baseline != null && p.RedlineBlinkInterval > 0)
-                notes.Add("The repo file blinks at the redline (redlineBlinkInterval " + p.RedlineBlinkInterval +
-                          ") but the lights stayed on above it in the capture. That may be ATSR's own effect rather than the game's.");
-
-            var bestGear = results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount).ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault();
+            var bestGear = results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount)
+                                  .ThenByDescending(r => int.TryParse(r.Gear, out int number) && number > 0)
+                                  .ThenByDescending(r => r.Samples).Select(r => r.Gear).FirstOrDefault();
             var capturedGears = results.Select(r => r.Gear).ToList();
             var kept = p.GearOrder.Where(g => !capturedGears.Contains(g)).ToList();
 
@@ -314,9 +355,40 @@ namespace LovelyCarDataCapture.Profile
             // per gear - and each gear keeps its own values.
             var byLed = new List<int>[p.LedNumber + 1];
             for (int i = 0; i <= p.LedNumber; i++) byLed[i] = new List<int>();
-            foreach (var gr in results)
-                for (int i = 0; i < gr.Leds.Length; i++)
-                    if (!layout.IsGap[i] && Trusted(gr.Leds[i])) byLed[i + 1].Add(gr.Leds[i].Rpm);
+            bool neutralLeftOut = false;
+            for (int i = 0; i < p.LedNumber; i++)
+            {
+                if (layout.IsGap[i]) continue;
+                var measured = results.Where(r => Trusted(r.Leds[i])).ToList();
+                var driven = measured.Where(r => int.TryParse(r.Gear, out int number) && number > 0).ToList();
+                if (driven.Count > 0)
+                {
+                    neutralLeftOut |= driven.Count < measured.Count;
+                    measured = driven;
+                }
+                byLed[i + 1].AddRange(measured.Select(r => r.Leds[i].Rpm));
+            }
+            if (neutralLeftOut)
+                notes.Add("Driven gears measured these lights, so neutral readings were left out of their shared RPM values.");
+
+            // When a new car's one light flickers across its switch-on point, no individual gear's
+            // window is trustworthy. Matching switch-ons in several gears still locate it better
+            // than RPM 0, which ATSR would light all the time.
+            if (baseline == null)
+                for (int led = 1; led <= p.LedNumber; led++)
+                {
+                    if (layout.IsGap[led - 1] || byLed[led].Count > 0) continue;
+                    var tentative = results.Select(r => r.Leds[led - 1])
+                                           .Where(l => l != null && l.Climbs > 0 && l.HighestOff.HasValue &&
+                                                       (l.Climbs > 1 ? l.ClimbWidth <= MaxWindowRpm :
+                                                        l.HighestOff.Value <= l.LowestOn &&
+                                                        l.LowestOn - l.HighestOff.Value <= MaxWindowRpm))
+                                           .Select(l => l.Rpm).ToList();
+                    if (tentative.Count < 2 || tentative.Max() - tentative.Min() > UniformRpm) continue;
+                    byLed[led].Add(Median(tentative));
+                    notes.Add("LED " + led + " had imperfect switch-on readings in " + tentative.Count +
+                              " gears, but they agree; their middle value was used. Check it in the game.");
+                }
 
             // One gear alone out of line with the rest is a bad reading rather than a different car: in
             // neutral and first the revs climb so fast that a few milliseconds of display lag misjudged
@@ -345,8 +417,28 @@ namespace LovelyCarDataCapture.Profile
                 var pooled = (int[])p.LedRpm[bestGear].Clone();
                 // To 5 rpm like every other value: the middle of an even count can land between two.
                 foreach (int led in measuredLeds) pooled[led] = (int)(Math.Round(Median(byLed[led]) / 5.0) * 5);
+                var pairs = new List<Tuple<int, int>>();
+                bool nearMirror = layout.LedNumber >= 4;
+                for (int left = 1; left <= layout.LedNumber / 2; left++)
+                {
+                    int right = layout.LedNumber + 1 - left;
+                    if (layout.IsGap[left - 1] && layout.IsGap[right - 1]) continue;
+                    if (layout.IsGap[left - 1] || layout.IsGap[right - 1] || pooled[left] == 0 || pooled[right] == 0 ||
+                        Math.Abs(pooled[left] - pooled[right]) > MirrorRpm ||
+                        !string.Equals(p.LedColor[left], p.LedColor[right], StringComparison.OrdinalIgnoreCase))
+                    { nearMirror = false; break; }
+                    pairs.Add(Tuple.Create(left, right));
+                }
+                if (nearMirror && pairs.Count >= 2)
+                {
+                    foreach (var pair in pairs)
+                        pooled[pair.Item1] = pooled[pair.Item2] = Math.Min(pooled[pair.Item1], pooled[pair.Item2]);
+                    notes.Add("The paired lights agreed within " + MirrorRpm +
+                              " rpm, so each pair was set to its earlier reading to light together on the wheel.");
+                }
                 int last = measuredLeds.Select(i => pooled[i]).DefaultIfEmpty(0).Max();
-                var redlines = results.Select(r => p.LedRpm[r.Gear][0]).Where(v => v > 0).ToList();
+                var redlines = sr.RedlineByGear.Values.Select(r => r.Rpm).ToList();
+                if (redlines.Count == 0 && sr.RedlineRpm.HasValue) redlines.Add(sr.RedlineRpm.Value);
                 pooled[0] = Math.Max(redlines.Count > 0 ? Median(redlines) : pooled[0], last);
 
                 // The lights can be the same in every gear while the redline isn't: the gears that had
@@ -357,11 +449,14 @@ namespace LovelyCarDataCapture.Profile
                 var before = p.GearOrder.ToDictionary(g => g, g => p.LedRpm[g][0]);
                 foreach (var gear in p.GearOrder)
                 {
-                    p.LedRpm[gear] = (int[])pooled.Clone();
-                    if (!redlinePerGear) continue;
-                    int rl = ownRedlines.TryGetValue(gear, out var measured) ? measured
-                           : baseline != null && before[gear] > 0 ? before[gear] : pooled[0];
-                    p.LedRpm[gear][0] = Math.Max(rl, last);
+                    // Only measured slots can replace this gear's values. An unseen light may
+                    // legitimately have a different threshold in each of the repo's gears.
+                    var row = p.LedRpm[gear];
+                    foreach (int led in measuredLeds) row[led] = pooled[led];
+                    int rl = !redlinePerGear && redlines.Count > 0 ? pooled[0]
+                           : ownRedlines.TryGetValue(gear, out var measured) ? measured
+                           : baseline != null ? before[gear] : pooled[0];
+                    row[0] = Math.Max(rl, last);
                 }
                 if (redlinePerGear)
                     notes.Add("The redline moves with the gear (" + string.Join(", ", ownRedlines.OrderBy(g => g.Key, StringComparer.Ordinal)
@@ -390,6 +485,26 @@ namespace LovelyCarDataCapture.Profile
                           "Either this car changes its lights per gear, or a sweep was caught mid-shift; the report's tables show which.");
             }
 
+            // A new car has no repo value to keep. Even when gears disagree, a light measured in
+            // another gear is better than RPM 0, which ATSR treats as always on.
+            if (baseline == null)
+            {
+                var filled = new List<string>();
+                foreach (var gr in results)
+                {
+                    var row = p.LedRpm[gr.Gear];
+                    for (int led = 1; led <= p.LedNumber; led++)
+                    {
+                        if (layout.IsGap[led - 1] || row[led] != 0 || byLed[led].Count == 0) continue;
+                        row[led] = (int)(Math.Round(Median(byLed[led]) / 5.0) * 5);
+                        filled.Add("gear " + gr.Gear + " LED " + led);
+                    }
+                }
+                if (filled.Count > 0)
+                    notes.Add("Missing switch-on readings for " + string.Join(", ", filled) +
+                              " were filled from the same lights in other gears. Check those gears in the game.");
+            }
+
             if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
             {
                 var incomplete = results.Where(r => r.Gear != bestGear && r.Leds.Where((l, i) => !layout.IsGap[i]).Any(l => !Trusted(l)))
@@ -405,23 +520,132 @@ namespace LovelyCarDataCapture.Profile
             {
                 FillUndrivenGears(p, baseline, bestGear, capturedGears, notes,
                     "Many cars use the same lights in every gear; capture the others if they differ.");
-                // A gear kept from the repo next to gears just measured leaves one file saying two
-                // different things, which is worth saying out loud.
-                if (baseline != null && bestGear != null && kept.Count > 0)
-                {
-                    var measured = p.LedRpm[bestGear];
-                    var repoRow = baseline.LedRpm.TryGetValue(kept[0], out var r0) ? r0 : null;
-                    if (repoRow != null && repoRow.Length == measured.Length)
-                    {
-                        int worst = Enumerable.Range(0, measured.Length).Where(i => measured[i] > 0 && repoRow[i] > 0)
-                                              .Select(i => Math.Abs(measured[i] - repoRow[i])).DefaultIfEmpty(0).Max();
-                        if (worst > 50)
-                            notes.Add("The gears kept from the repo are up to " + worst + " rpm away from what was just measured, " +
-                                      "so the file now says two different things. Capture those gears too, copy gear " + bestGear +
-                                      "'s values over them in the RPM LED Builder, or set CopyMeasuredToOtherGears to have this done for you.");
-                    }
-                }
             }
+        }
+
+        private static void ReportUndrivenDifference(CarProfile p, ScreenLedResult sr, List<string> notes)
+        {
+            // Compare the final rows, after restoring previous captures, so the warning describes
+            // the file actually written rather than repository fallbacks that were replaced.
+            var best = sr.Gears.Where(g => g.CapturedCount > 0).OrderByDescending(g => g.CapturedCount)
+                         .ThenByDescending(g => g.Samples).FirstOrDefault();
+            if (best == null) return;
+            var measured = p.LedRpm[best.Gear];
+            var captured = new HashSet<string>(sr.Gears.Select(g => g.Gear));
+            var differences = p.GearOrder.Where(g => !captured.Contains(g)).SelectMany(g =>
+                Enumerable.Range(0, measured.Length).Where(i => measured[i] > 0 && p.LedRpm[g][i] > 0)
+                    .Select(i => Math.Abs(measured[i] - p.LedRpm[g][i])));
+            int worst = differences.DefaultIfEmpty(0).Max();
+            if (worst > 50)
+                notes.Add("Gears not captured in this drive differ by up to " + worst +
+                    " rpm from gear " + best.Gear + ". This may be normal for this car; capture those gears to check their values.");
+        }
+
+        private static void AddFinalScreenNotes(ScreenLedResult sr, CarProfile p, CarProfile baseline,
+                                                HashSet<string> previousGears, List<string> notes)
+        {
+            if (sr.Layout == null || p.LedNumber != sr.Layout.LedNumber) return;
+            foreach (var gr in sr.Gears)
+            {
+                if (previousGears.Contains(gr.Gear) || !p.LedRpm.ContainsKey(gr.Gear)) continue;
+                var unresolved = new List<int>();
+                for (int i = 0; i < gr.Leds.Length; i++)
+                {
+                    if (sr.Layout.IsGap[i] || (gr.Leds[i] != null && Trusted(gr.Leds[i]))) continue;
+                    int final = p.LedRpm[gr.Gear][i + 1];
+                    bool remainsRepo = baseline != null && baseline.LedRpm.TryGetValue(gr.Gear, out var old) &&
+                                       i + 1 < old.Length && final == old[i + 1];
+                    bool supportedByAnotherGear = sr.Gears.Any(other => other.Gear != gr.Gear &&
+                        i < other.Leds.Length && Trusted(other.Leds[i]) &&
+                        Math.Abs(other.Leds[i].Rpm - final) <= 5);
+                    if (baseline == null ? final == 0 : remainsRepo && !supportedByAnotherGear) unresolved.Add(i + 1);
+                }
+                if (unresolved.Count == 0) continue;
+                notes.Add("Gear " + gr.Gear + ": LED " + string.Join(", ", unresolved) +
+                          (baseline == null
+                              ? " still has no trusted switch-on value and remains 0."
+                              : " has no distinct trusted capture value and remains at the repo value."));
+            }
+        }
+
+        private static void AddFinalBlinkNote(ScreenLedResult sr, CarProfile p, CarProfile baseline,
+                                              LocalProfileOverrideResult overrides, List<string> notes)
+        {
+            if (overrides.BlinkInterval.HasValue)
+            {
+                if (sr.BlinkIntervalMs.HasValue)
+                    notes.Add("The capture measured a blink of about " + sr.BlinkIntervalMs +
+                              " ms; the confirmed local override of " + overrides.BlinkInterval.Value +
+                              " ms is the final exported interval.");
+                return;
+            }
+            if (sr.BlinkIntervalMs.HasValue)
+            {
+                if (baseline != null && p.RedlineBlinkInterval != sr.BlinkIntervalMs.Value)
+                    notes.Add("The capture measured a blink of about " + sr.BlinkIntervalMs +
+                              " ms, but the repo value of " + p.RedlineBlinkInterval + " ms remains final.");
+                else
+                    notes.Add("The capture measured a blink of about " + p.RedlineBlinkInterval +
+                              " ms, and that value is final.");
+            }
+            else if (baseline != null && p.RedlineBlinkInterval > 0 && sr.RedlineRpm.HasValue)
+                notes.Add("The capture did not measure a blink; the repo value of " + p.RedlineBlinkInterval +
+                          " ms remains final.");
+        }
+
+        private static IEnumerable<string> DescribeFinalSources(CarProfile p, CarProfile baseline,
+                                                                  IEnumerable<string> capturedGears,
+                                                                  IEnumerable<string> previousGears,
+                                                                  LocalProfileOverrideResult overrides,
+                                                                  bool copyMeasured,
+                                                                  bool captureApplied,
+                                                                  bool screen, ScreenLedResult sr)
+        {
+            var captured = new HashSet<string>(capturedGears ?? new string[0]);
+            var previous = new HashSet<string>(previousGears ?? new string[0]);
+            var lines = new List<string>();
+            var capturedList = p.GearOrder.Where(captured.Contains).ToList();
+            var previousList = p.GearOrder.Where(previous.Contains).ToList();
+            var fallback = p.GearOrder.Where(g => !captured.Contains(g) && !previous.Contains(g)).ToList();
+
+            if (capturedList.Count > 0)
+                lines.Add("RPM: captured gears " + string.Join(", ", capturedList) +
+                          (captureApplied
+                              ? " use trusted capture values where available; final rows may combine measured, pooled, and starting-file values."
+                              : " did not supply mapped LED thresholds; starting-file or estimated values remain."));
+            if (previousList.Count > 0)
+                lines.Add("RPM: previous local values are final for retained gears " + string.Join(", ", previousList) + ".");
+            if (fallback.Count > 0 && baseline != null)
+                lines.Add("RPM: uncaptured gears " + string.Join(", ", fallback) +
+                          (copyMeasured
+                              ? " use the measured gear's values where configured; otherwise their repo values remain."
+                              : " use pooled capture values where available; otherwise their repo values remain."));
+            if (capturedList.Count == 0 && previousList.Count == 0 && baseline == null)
+                lines.Add("RPM: no LED capture supplied a value; the export uses its configured defaults.");
+
+            var effectiveColorSlots = overrides.ColorSlots.Where(i => i == 0 || !screen || sr == null ||
+                sr.Layout == null || i > sr.Layout.LedNumber || !sr.Layout.IsGap[i - 1]).ToList();
+            if (effectiveColorSlots.Count > 0)
+                lines.Add("Colors: confirmed local overrides are final for LED " + string.Join(", ", effectiveColorSlots) +
+                          "; other slots use the capture or repo result.");
+            else if (overrides.ColorSlots.Count > 0)
+                lines.Add("Colors: the requested local color overrides targeted physical gaps, which remain black in the final export.");
+            else if (baseline != null)
+                lines.Add("Colors: repo colors are the fallback where capture evidence did not change a grouping.");
+            else if (screen)
+                lines.Add("Colors: measured from the screen capture.");
+
+            if (overrides.BlinkInterval.HasValue)
+                lines.Add("Redline blink: confirmed local override " + overrides.BlinkInterval.Value + " ms is final.");
+            else if (screen && sr != null && sr.BlinkIntervalMs.HasValue && baseline != null &&
+                     p.RedlineBlinkInterval != sr.BlinkIntervalMs.Value)
+                lines.Add("Redline blink: capture measured about " + sr.BlinkIntervalMs +
+                          " ms; repo value " + p.RedlineBlinkInterval + " ms is final.");
+            else if (screen && sr != null && sr.BlinkIntervalMs.HasValue)
+                lines.Add("Redline blink: capture measured about " + p.RedlineBlinkInterval + " ms, which is final.");
+            else if (baseline != null)
+                lines.Add("Redline blink: repo value " + p.RedlineBlinkInterval + " ms is final where capture timing was unavailable.");
+            return lines;
         }
 
         /// <summary>
@@ -446,14 +670,30 @@ namespace LovelyCarDataCapture.Profile
         {
             var layout = sr.Layout;
             var suggested = new string[layout.LedNumber + 1];
-            suggested[0] = sr.RedlineFromBlink || sr.SteadyAtLimiterRpm.HasValue ? "#00000000" : sr.RedlineColor ?? Red;
+            // Without a measured strip-wide colour change, ATSR must keep each light's own colour.
+            suggested[0] = sr.RedlineFromBlink || sr.SteadyAtLimiterRpm.HasValue ? "#00000000" : sr.RedlineColor ?? "#00000000";
             for (int i = 0; i < layout.LedNumber; i++)
             {
                 var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
                 bool unknown = sr.ColorUnknown != null && sr.ColorUnknown[i];
                 suggested[i + 1] = layout.IsGap[i] ? "#00000000"
-                    : group?.Hex ?? (unknown ? suggested[0] : "#00000000");
+                    : group?.Hex ?? (unknown ? sr.RedlineColor ?? Red : "#00000000");
             }
+            if (baseline == null)
+                for (int left = 1; left <= layout.LedNumber / 2; left++)
+                {
+                    int right = layout.LedNumber + 1 - left;
+                    var a = sr.MeasuredColors[left - 1];
+                    var b = sr.MeasuredColors[right - 1];
+                    if (suggested[left] == suggested[right] || layout.IsGap[left - 1] || layout.IsGap[right - 1] || a.Hue < 0 || b.Hue < 0 ||
+                        HueGap(a.Hue, b.Hue) > MirrorColourDegrees ||
+                        !p.LedRpm.Values.Any(row => row[left] > 0 && row[right] > 0 && Math.Abs(row[left] - row[right]) <= UniformRpm))
+                        continue;
+                    var mean = new LedColor((a.R + b.R) / 2, (a.G + b.G) / 2, (a.B + b.B) / 2);
+                    string same = LedPalette.Classify(mean, out _);
+                    if (LedPalette.Classify(a, out _) != same || LedPalette.Classify(b, out _) != same) continue;
+                    suggested[left] = suggested[right] = same;
+                }
             if (baseline == null && sr.ColorUnknown != null && sr.ColorUnknown.Any(u => u))
                 notes.Add("LED " + string.Join(", ", Enumerable.Range(0, layout.LedNumber).Where(i => sr.ColorUnknown[i]).Select(i => i + 1)) +
                           " were given the redline colour, being the only colour they were ever seen in. Check them in the game.");
@@ -467,19 +707,6 @@ namespace LovelyCarDataCapture.Profile
                               "so ATSR keeps the strip in its own colours there, as the game does.");
                 return;
             }
-
-            // The repo file's colors are left alone: a game's own rendering can't settle a color the
-            // file already states. Only a different grouping is worth reporting.
-            var mismatched = new List<string>();
-            for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
-            {
-                if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
-                bool fileGap = LedLayout.IsGapColor(p.LedColor[i + 1]);
-                if (fileGap != layout.IsGap[i])
-                    mismatched.Add("LED " + (i + 1) + " is " + (fileGap ? "a gap in the file but lit on screen" : "lit in the file but never lit on screen"));
-            }
-            if (mismatched.Count > 0)
-                notes.Add("Gaps differ from the repo file: " + string.Join("; ", mismatched) + ".");
 
             // Lights the screen shows in the very same colour can't be two colours in the file. PMR's
             // Viper has its outer pair identical on screen, while its file makes one green and the other
@@ -504,16 +731,30 @@ namespace LovelyCarDataCapture.Profile
                 foreach (int i in changed) p.LedColor[i + 1] = nearest;
                 notes.Add("LED " + string.Join(", ", slots.Select(i => i + 1)) + " show the same colour on screen (" + group.Measured +
                           "), but the repo file had them as " + string.Join(" and ", inFile) + ". LED " +
-                          string.Join(", ", changed.Select(i => i + 1)) + " now use " + nearest +
+                          string.Join(", ", changed.Select(i => i + 1)) + " were grouped as " + nearest +
                           ", the file's own colour nearest what the screen shows. Check it in the game.");
             }
 
+        }
+
+        // Compare only after overrides and physical gaps have settled the exported colors.
+        private static void AddFinalColorNotes(ScreenLedResult sr, CarProfile p,
+                                               LocalProfileOverrideResult overrides, List<string> notes)
+        {
+            var layout = sr.Layout;
             var different = new List<string>();
-            for (int i = 0; i < layout.LedNumber && i + 1 < p.LedColor.Count; i++)
+            for (int i = 0; i < layout.LedNumber; i++)
             {
-                if (layout.IsGap[i] || LedLayout.IsGapColor(p.LedColor[i + 1])) continue;
+                if (layout.IsGap[i] || overrides.ColorSlots.Contains(i + 1)) continue;
                 if (sr.ColorUnknown != null && sr.ColorUnknown[i]) continue;
-                if (!SameColour(p.LedColor[i + 1], suggested[i + 1])) different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + suggested[i + 1]);
+                if (LedLayout.IsGapColor(p.LedColor[i + 1]))
+                {
+                    different.Add("LED " + (i + 1) + " is a gap in the file but lit on screen");
+                    continue;
+                }
+                var group = sr.ColorGroups.FirstOrDefault(g => g.Slots.Contains(i));
+                if (group != null && !SameColour(p.LedColor[i + 1], group.Hex))
+                    different.Add("LED " + (i + 1) + " " + p.LedColor[i + 1] + " vs " + group.Hex);
             }
             // A strip that blinks in its own colours: ATSR paints every light in the redline colour above
             // the redline unless that colour is transparent, which keeps the strip's own.
@@ -524,7 +765,7 @@ namespace LovelyCarDataCapture.Profile
 
             // The redline colour is ledColor[0], and it was never compared: two AMS2 cars turned out to
             // flash cyan where their files say blue, and nothing said so.
-            if (!string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameColour(p.LedColor[0], sr.RedlineColor))
+            if (!overrides.ColorSlots.Contains(0) && !string.IsNullOrEmpty(sr.RedlineColor) && p.LedColor.Count > 0 && !SameColour(p.LedColor[0], sr.RedlineColor))
                 notes.Add("Above the redline the strip showed " + sr.RedlineMeasured + ", nearest " + sr.RedlineColor +
                           ", where the repo file's redline color is " + p.LedColor[0] + ". It was kept; change it by hand if the game agrees with the screen.");
 
@@ -739,8 +980,12 @@ namespace LovelyCarDataCapture.Profile
         private static bool Trusted(LedThreshold led)
         {
             if (led == null || led.Inconsistent) return false;
-            if (led.Climbs > 1) return led.ClimbSpread <= MaxWindowRpm;
-            if (!led.HighestOff.HasValue) return false;
+            // Several identical midpoints do not make a threshold precise when every climb
+            // crossed it through the same wide gap. Keep both the crossing bounds and the
+            // repeatability check; otherwise 5000/6000 dark, 7000 lit looks trustworthy.
+            if (led.Climbs > 1)
+                return led.ClimbWidth <= MaxWindowRpm && led.ClimbSpread <= MaxWindowRpm;
+            if (!led.HighestOff.HasValue || led.HighestOff.Value > led.LowestOn) return false;
             return led.LowestOn - led.HighestOff.Value <= MaxWindowRpm;
         }
 
@@ -751,7 +996,8 @@ namespace LovelyCarDataCapture.Profile
             string window;
             if (led == null) window = "never lit";
             else if (led.Climbs > 1)
-                window = led.Climbs + " climbs, agreeing within " + led.ClimbSpread + " rpm" + (Trusted(led) ? "" : " - too loose, not used");
+                window = led.Climbs + " climbs, agreeing within " + led.ClimbSpread + " rpm; widest crossing " +
+                         led.ClimbWidth + " rpm" + (Trusted(led) ? "" : " - too loose, not used");
             else if (!Trusted(led) && led.HighestOff.HasValue)
                 window = "dark to " + led.HighestOff + ", lit from " + led.LowestOn + " - too wide to use";
             else if (led.Inconsistent)
@@ -761,7 +1007,6 @@ namespace LovelyCarDataCapture.Profile
             else
                 window = "<= " + led.LowestOn + " (no dark sample below it)";
             if (led?.FallRpm != null) window += "; off at " + led.FallRpm + ", the two averaged";
-            else if (led != null && led.LagTaken > 0) window += "; " + led.LagTaken + " rpm of display lag taken off";
             return string.Format(CultureInfo.InvariantCulture, "  LED {0,2}  {1,6}  {2}",
                 index + 1, led?.Rpm.ToString(CultureInfo.InvariantCulture) ?? "-", window);
         }
@@ -792,11 +1037,8 @@ namespace LovelyCarDataCapture.Profile
         {
             var undriven = p.GearOrder.Where(g => !driven.Contains(g)).ToList();
             if (undriven.Count == 0 || bestGear == null) return;
-            if (baseline != null)
-            {
-                notes.Add("Gear " + string.Join(", ", undriven) + " not captured; kept the repo values.");
-                return;
-            }
+            // Final source reporting happens after any previous-capture rows have been restored.
+            if (baseline != null) return;
             foreach (var g in undriven) p.LedRpm[g] = (int[])p.LedRpm[bestGear].Clone();
             notes.Add("Gear " + string.Join(", ", undriven) + " not captured; copied gear " + bestGear + "'s values. " + why);
         }

@@ -5,7 +5,7 @@ A SimHub plugin that measures a car's rev lights while you drive and writes a
 comes on at, their colours, the redline and whether the strip blinks. A report explains where every
 value came from.
 
-In AMS2, ACC, LMU, PMR and most other games it reads the lights off the screen. In F1 and iRacing it
+In AMS2, ACC, LMU, PMR, AC, AC EVO and most other games it reads the lights off the screen. In F1 and iRacing it
 reads them from telemetry.
 
 *A community tool, not made by or affiliated with Lovely Sim Racing or ATSR.*
@@ -42,6 +42,9 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
 5. Press **Stop and export**.
 
 The car file and its report are written to `Documents\SimHub\LovelyCarDataCapture\<game>\`.
+Replacing an export saves its previous JSON and report in that game's `backups` folder first.
+Gears not captured this time keep their previous RPM values. Confirmed color and blink adjustments
+can be kept in a [local overrides file](docs/reference.md#keeping-confirmed-colors-and-blink-timing).
 Forgot to stop? Closing SimHub exports a capture that's still running.
 Read the report: it says what was measured, how tightly, what was left out and why. From the
 Ginetta's:
@@ -93,8 +96,8 @@ pull request.
 
 | Game | How the lights are read | Tested |
 | --- | --- | --- |
-| AMS2, ACC, LMU, PMR | Off the screen | Yes, against cars checked in game |
-| AC, AC EVO, RaceRoom and others | Off the screen | Not yet |
+| AMS2, ACC, LMU, PMR, AC, AC EVO | Off the screen | Yes, against selected cars checked in game |
+| RaceRoom and others | Off the screen | Not yet |
 | F1 2021–2026, iRacing | Telemetry | Not yet in game |
 
 ## More

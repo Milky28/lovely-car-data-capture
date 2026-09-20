@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>LovelyCarDataCapture</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Milky28</Authors>
     <Product>Lovely Car Data Capture</Product>
     <Copyright>Copyright (c) 2026 Milky28</Copyright>

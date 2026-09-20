@@ -18,11 +18,28 @@ namespace LovelyCarDataCapture.Profile
         public const string DevelopmentFolder = "_ATSR_DevelopmentData";
 
         /// <summary>
-        /// Where ATSR reads car files from when "Enable Local RPM Folder" is on: &lt;SimHub folder&gt;\_ATSR_DevelopmentData\rpm_data\&lt;slug of carId&gt;.json.
+        /// Where ATSR reads car files from when "Enable Local RPM Folder" is on: &lt;SimHub folder&gt;\_ATSR_DevelopmentData\rpm_data\&lt;slug ATSR uses for the car&gt;.json.
         /// There's no game subfolder.
         /// </summary>
         public static string DevelopmentFilePath(string simHubFolder, string carId) =>
-            Path.Combine(simHubFolder, DevelopmentFolder, "rpm_data", Slug.Make(carId) + ".json");
+            DevelopmentFilePath(simHubFolder, null, carId);
+
+        /// <summary>
+        /// Returns the local ATSR filename. ATSR canonicalizes this one LMU identity internally while
+        /// SimHub continues to report the game's raw car id; exports themselves keep that raw id.
+        /// </summary>
+        public static string DevelopmentFilePath(string simHubFolder, string gameName, string carId) =>
+            Path.Combine(simHubFolder, DevelopmentFolder, "rpm_data", DevelopmentFileName(gameName, carId));
+
+        public static string DevelopmentFileName(string gameName, string carId) =>
+            Slug.Make(IsLmu(gameName) && string.Equals(carId, "Lamborghini Iron Lynx 2024", System.StringComparison.OrdinalIgnoreCase)
+                ? "Lamborghini SC63" : carId) + ".json";
+
+        private static bool IsLmu(string gameName)
+        {
+            var slug = Slug.Make(gameName);
+            return slug == "lmu" || slug == "le-mans-ultimate";
+        }
 
         public static List<string> Check(CarProfile p, string gameName, RepoLookup lookup)
         {
@@ -30,7 +47,8 @@ namespace LovelyCarDataCapture.Profile
             var sim = Slug.Make(gameName);
             var expectedPath = sim + "/" + Slug.Make(p.CarId) + ".json";
 
-            if (lookup != null && lookup.Status == RepoLookupStatus.Found && lookup.RelativePath != expectedPath)
+            if (lookup != null && lookup.Status == RepoLookupStatus.Found && lookup.RelativePath != expectedPath &&
+                DevelopmentFileName(gameName, p.CarId) == Slug.Make(p.CarId) + ".json")
                 notes.Add("ATSR looks for data/" + expectedPath + ", so it never finds the repo's data/" + lookup.RelativePath +
                           ". This export is named " + Path.GetFileName(expectedPath) + "; submit it under that name and remove the old file.");
 

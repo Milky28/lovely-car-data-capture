@@ -21,6 +21,19 @@
     <Reference Include="WindowsBase" />
     <Reference Include="System.Xaml" />
     <ProjectReference Include="..\LovelyCarDataCapture.csproj" />
+    <!-- Lifecycle tests run the plugin and its worker outside SimHub. -->
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubPath)SimHub.Plugins.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SimHubPath)GameReaderCommon.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>$(SimHubPath)SimHub.Logging.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <!-- Copied here so the tests can run outside SimHub. -->
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(SimHubPath)Newtonsoft.Json.dll</HintPath>

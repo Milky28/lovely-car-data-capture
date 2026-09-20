@@ -34,6 +34,15 @@ namespace LovelyCarDataCapture.Tests
 
             Run("Slug follows the README examples", SlugExamples);
             Run("CarProfile round-trips the repo layout", ProfileRoundTrip);
+            Run("Export backups preserve each previous JSON and report", ExportBackupsKeepPreviousFiles);
+            Run("A failed export backup leaves existing files intact", ExportBackupFailureKeepsOriginals);
+            Run("Confirmed colors and blink survive new captures", LocalOverridesSurviveRecapture);
+            Run("Local overrides reject wrong cars and invalid values without partial changes", LocalOverridesRejectWrongOrInvalidFiles);
+            Run("Previous captures keep valid RPM rows for undriven gears", PreviousCaptureKeepsUndrivenRows);
+            Run("Previous captures reject invalid RPM rows", PreviousCaptureRejectsInvalidRows);
+            Run("Reports name final LMU override and retained gear sources", ReportNamesFinalLmuSources);
+            Run("Reports identify the final blink override", ReportNamesBlinkOverrideAsFinal);
+            Run("Reports distinguish pooled readings from unresolved fallbacks", ReportDistinguishesPooledAndUnresolvedScreenValues);
             Run("CarProfile keeps extra keys and _schemaVersion first", ProfileExtraKeys);
             Run("LedLayout classifies layouts", LayoutClassify);
             Run("LedLayout generates mirrored rows around gaps", LayoutGenerate);
@@ -42,6 +51,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Compose F1 into a 15-LED repo file", ComposeF1Existing);
             Run("Compose F1 leaves a 10-LED repo file's RPMs alone", ComposeF1TenLeds);
             Run("Compose F1 new car", ComposeF1New);
+            Run("F1 exports only trusted thresholds", ComposeF1RejectsLooseThresholds);
             Run("Compose iRacing follows the repo file's gaps and mirroring", ComposeIRacingMirrored);
             Run("Compose iRacing per-gear lights keep undriven gears", ComposeIRacingPerGear);
             Run("Compose without LED data keeps the repo file", ComposeRedlineOnlyExisting);
@@ -50,6 +60,7 @@ namespace LovelyCarDataCapture.Tests
             Run("ATSR layout rule", AtsrLayoutRule);
             Run("ATSR compatibility checks", AtsrChecks);
             Run("ATSR Developer Mode path", AtsrDevelopmentPath);
+            Run("ATSR uses the canonical SC63 filename only in LMU", AtsrLmuCanonicalDevelopmentPath);
             Run("ATSR built-in car behaviour is reported", AtsrSpecialCarNotes);
             Run("Manual marks follow the repo file's gaps", ManualMarksWithGaps);
             Run("Manual marks follow mirrored and grouped LEDs", ManualMarksMirrored);
@@ -65,16 +76,58 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen capture drops half-caught gears", ScreenPartialGearsAreNotWrittenDown);
             Run("Screen capture handles a light that comes on at the redline", ScreenLastPairLightsAtTheRedline);
             Run("Screen capture pools gears that agree", ScreenPoolsAgreeingGears);
+            Run("Pooling preserves unmeasured values in each gear", ScreenPoolingPreservesUnmeasuredValues);
+            Run("Screen restart waits for the old worker", ScreenRestartWaitsForWorker);
+            Run("Reset stops and clears capture", ResetStopsCapture);
             Run("Screen capture keeps a blinking strip out of the thresholds", ScreenBlinkingStripIsNotAThreshold);
             Run("A real blinking M8 capture reads correctly", ScreenRealBlinkingM8);
             Run("A real ACC capture reads correctly through the fade", ScreenRealAccFades);
             Run("A real LMU capture reads correctly past a reflection", ScreenRealLmuSc63);
+            Run("AC McLaren keeps all four green and four red LEDs", ScreenRealAcMcLarenKeepsEveryLight);
+            Run("AC EVO BMW keeps physical gap slots off", ScreenRealAcevoBmwKeepsGapSlotsOff);
+            Run("AC EVO BMW repeats while retaining an undriven gear", ScreenRealAcevoBmwRepeatedCaptureKeepsUndrivenGear);
             Run("A real new ACC car comes out as a whole file", ScreenRealNewAccCar);
             Run("A real ACC capture sees past traction control and ABS lights", ScreenRealAccIndicators);
             Run("Screen detector finds white-hot lights by their glow (PMR)", ScreenDetectorWhiteCores);
+            Run("Screen detector finds four-dot Mercedes clusters above its dash", ScreenDetectorMercedesClusters);
             Run("A real PMR capture reads through an 80 ms display lag", ScreenRealPmrLag);
             Run("A real PMR C8.R capture reads past the pit limiter and a blue sweep", ScreenRealPmrC8);
             Run("A car with no redline effect gets a transparent redline at the limiter", ScreenRealNoRedlineEffect);
+            Run("A Panoz gear display between the rev lights is ignored", ScreenRealPanozGearDisplay);
+            Run("A Corvette gear display between the rev lights is ignored", ScreenRealCorvetteGearDisplay);
+            Run("A Lister capture without a strip-wide redline keeps its LED colors", ScreenRealListerNoStripRedline);
+            Run("A PMR Storm capture ignores missed lit frames during each climb", ScreenRealPmrStormFlicker);
+            Run("A second PMR Storm capture rejects one late mirrored light", ScreenRealPmrStormMirroredOutlier);
+            Run("An S7 capture fills missed lights in individual gears", ScreenRealPmrS7MissingGears);
+            Run("An Aston GTE capture keeps the first light off at idle and groups its colours", ScreenRealPmrAstonGte);
+            Run("A BMW GT3 capture keeps paired lights together", ScreenRealPmrBmwGt3Pairs);
+            Run("The confirmed PMR Mustang capture retains its timings and colours", ScreenRealPmrMustang);
+            Run("The second Mustang capture starts its redline at the first dark flash", ScreenRealPmrMustangDarkFirstFlash);
+            Run("Dark-first coloured flashes keep each gear's initial onset", DarkFirstFlashUsesEachGearsInitialEdge);
+            Run("Missing frames do not move a coloured flash earlier", MissedFramesDoNotAdvanceColourFlash);
+            Run("A fast climb keeps the initial dark flash boundary", DarkFirstFlashCanSpanAFastClimb);
+            Run("A dark flash cannot be confirmed by another gear", DarkFirstFlashDoesNotBridgeGears);
+            Run("Telemetry is interpolated at screen acquisition time", TimingHistoryInterpolatesAtAcquisitionTime);
+            Run("Telemetry matching rejects gear and session crossings", TimingHistoryRejectsGearAndSessionCrossings);
+            Run("Telemetry matching drops stale frames without waiting", TimingHistoryDropsStaleFramesWithoutWaiting);
+            Run("Repeated wide crossings remain untrusted", ConfidenceRejectsWideRepeatableCrossing);
+            Run("Dark and lit frames at the same RPM form a valid crossing", ConfidenceAcceptsExactSingleCrossing);
+            Run("Screen fallback rejects repeated wide crossings", ConfidenceRejectsWideScreenFallback);
+            Run("Narrow crossings remain trusted when aggregate bounds overlap", ConfidenceAcceptsNarrowOverlappingCrossings);
+            Run("Opposing timing errors do not cancel in the lag fit", ConfidenceRejectsOpposingLagResiduals);
+            Run("Transition images own their pixel buffers", TransitionRecorderCopiesFrameOwnership);
+            Run("Transition images retain neighbours and colour changes", TransitionRecorderSelectsNeighborsAndColors);
+            Run("Transition image memory and count stay bounded", TransitionRecorderBoundsLongCapture);
+            Run("Transition image sampling resets only for a new capture", TransitionRecorderSamplingResetAndBreak);
+            Run("PMR Huracan centre LEDs retain observed switch-on thresholds", ScreenRealPmrHuracanCenterLeds);
+            Run("Curved LED positions exclude the logo below them", DetectorKeepsCurvedLedsAboveLogo);
+            Run("LED position calibration survives dark and redline phases", DetectorKeepsCalibrationWhileStripIsDark);
+            Run("LED positions learn progressively and reset with the capture box", DetectorLearnsLaterLightsAndResetsForRegion);
+            Run("Transition images do not bridge interrupted capture", TransitionRecorderBreaksSequence);
+            Run("Disabled transition images write nothing", TransitionRecorderOffDoesNotWrite);
+            Run("Transition images reject frames beyond the memory budget", TransitionRecorderMemoryBound);
+            Run("A real Mercedes cluster capture reaches the steady limiter", ScreenRealMercedesClusters);
+            Run("Picking a capture box saves its exact pixels", SnapshotSavesCaptureBoxPixels);
             Run("A screen capture stops keeping frames when full", ScreenCaptureStopsWhenFull);
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
@@ -309,6 +362,33 @@ namespace LovelyCarDataCapture.Tests
             Check(copied != null, "report says which gear was copied:\n" + report);
             foreach (var g in new[] { "R", "N", "1", "4", "5", "6", "7", "8" }) SeqEqual(p.LedRpm[copied], p.LedRpm[g], "undriven gear " + g + " copies gear " + copied);
             Check(p.LedRpm["7"].Skip(1).All(v => v > 0), "no zeros left");
+        }
+
+        private static void ComposeF1RejectsLooseThresholds()
+        {
+            var session = new CaptureSession("F12025", "Ferrari");
+            session.F1.Record("1", 4000, 0);
+            session.F1.Record("1", 5000, 0);
+            session.F1.Record("1", 5100, 1);       // LED 1 has a tight window.
+            session.F1.Record("1", 6100, 32767);   // The other LEDs only have a 1000 rpm window.
+            var baseline = F1File(15);
+            foreach (var lookup in new[] { Found(baseline, "f12025/ferrari.json"), null })
+            {
+                var result = Compose(session, lookup);
+                var row = result.Profile.LedRpm["1"];
+                Equal(5050, row[1], "trusted LED is written");
+                var old = CarProfile.Parse(baseline).LedRpm["1"];
+                for (int led = 2; led <= 15; led++)
+                    Equal(lookup == null ? 0 : old[led], row[led], "loose LED " + led + " is not written");
+                Equal(lookup == null ? 5050 : old[0], row[0], "rejected LEDs do not raise the redline");
+                Check(result.Report.Any(l => l.Contains("measured too loosely to use")), "report explains rejected values");
+            }
+            session.F1.Record("2", 4000, 0);
+            session.F1.Record("2", 5000, 0);
+            session.F1.Record("2", 5100, 1);
+            session.F1.Record("2", 5200, 3);
+            var combined = Compose(session, null).Profile;
+            SeqEqual(combined.LedRpm["2"], combined.LedRpm["N"], "undriven gears copy the most trusted measurements");
         }
 
         private static void ComposeIRacingMirrored()

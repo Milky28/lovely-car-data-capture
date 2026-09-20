@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -51,6 +52,19 @@ namespace LovelyCarDataCapture.Plugin
                 finally { bitmap.UnlockBits(data); }
             }
         }
+
+        /// <summary>Keep the exact pixels the detector saw inside the accepted capture box.</summary>
+        public void SaveRegion(string path, PixelRect region)
+        {
+            int x = Math.Max(0, region.X - Left), y = Math.Max(0, region.Y - Top);
+            int width = Math.Min(region.Width, Frame.Width - x), height = Math.Min(region.Height, Frame.Height - y);
+            if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(region));
+            var source = BitmapSource.Create(Frame.Width, Frame.Height, 96, 96, PixelFormats.Bgra32, null, Frame.Pixels, Frame.Stride);
+            var png = new PngBitmapEncoder();
+            png.Frames.Add(BitmapFrame.Create(new CroppedBitmap(source, new Int32Rect(x, y, width, height))));
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using (var file = File.Create(path)) png.Save(file);
+        }
     }
 
     /// <summary>
@@ -66,7 +80,6 @@ namespace LovelyCarDataCapture.Plugin
     {
         private readonly DesktopSnapshot _shot;
         private readonly Action<PixelRect> _onSave;
-        private readonly StripDetector _detector = new StripDetector();
         private readonly Canvas _canvas = new Canvas();
         private readonly WpfRectangle _selection;
         private readonly TextBlock _found;
@@ -207,7 +220,7 @@ namespace LovelyCarDataCapture.Plugin
             if (_rect.IsEmpty || _rect.Width < 4 || _rect.Height < 4) { _found.Text = "Nothing picked yet."; return; }
             var region = Region();
             var inStill = new PixelRect(region.X - _shot.Left, region.Y - _shot.Top, region.Width, region.Height);
-            List<LitBlob> blobs = _detector.Detect(_shot.Frame, inStill);
+            List<LitBlob> blobs = new StripDetector().Detect(_shot.Frame, inStill);
             _found.Text = region.Width + " x " + region.Height + " pixels. " +
                           (blobs.Count == 0
                               ? "No lit lights in the box - that's fine if none were on when the still was taken."

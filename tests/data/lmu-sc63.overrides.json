@@ -1,0 +1,6 @@
+{
+  "game": "lmu",
+  "carId": "Lamborghini Iron Lynx 2024",
+  "ledNumber": 10,
+  "ledColor": { "6": "#FFFFFF00", "7": "#FFFFFF00", "8": "#FFFFFF00" }
+}

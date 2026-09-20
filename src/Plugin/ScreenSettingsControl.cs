@@ -225,6 +225,10 @@ namespace LovelyCarDataCapture.Plugin
                                      "It lets a capture be checked again later, by a newer version of the plugin or when a value " +
                                      "looks odd, without driving it again. A few MB for a long capture.",
                                      v => _settings.SaveCaptureFrames = v));
+            panel.Children.Add(Check("Keep images around light changes", settings.SaveTransitionFrames,
+                                     "Keeps the previous, current and following screen images when the detected LED count or colour state changes. " +
+                                     "It is useful for diagnosing a difficult car, but is off by default and bounded to a small export.",
+                                     v => _settings.SaveTransitionFrames = v));
             panel.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
                                      "Looks the car up on GitHub, read-only, and keeps its name, colours, gaps and anything not measured.",
                                      v => _settings.UseRepoFile = v));
