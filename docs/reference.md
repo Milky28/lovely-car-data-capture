@@ -81,6 +81,12 @@ folder. ATSR's development copy must also be replaced and reloaded if you want t
 
 ## Capturing additional gears
 
+If SimHub does not report the car's gear count and the track is too short to reach the higher gears,
+choose **Top gear for next export** on the plugin's page before stopping the capture. The export includes
+every forward gear through that number. Unreached gears use the usual captured or starting-file
+fallbacks, and the report names the manual count. The choice returns to **Auto** after a successful
+export so it cannot carry into the next car.
+
 Each export reads the previous car file from the same game's output folder. Gears absent from the
 current capture keep their previous RPM rows, including redline. Gears captured now use the normal
 measurement and repository fallback rules. Colors and blink timing still use the overrides above.
@@ -135,6 +141,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `ScreenBoxX` / `Y` / `Width` / `Height` | *(unset)* | The box being watched, in screen pixels. Set it with *Pick the lights…* or *Adjust live…*. |
 | `ScreenCaptureFps` | `30` | Frames read per second, 30 or 60. Use 60 for a car whose lights blink at the limiter, so each dark flash spans enough frames to time, or one that revs very quickly; it roughly doubles the CPU a capture uses. Also on the plugin's page. |
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
+| `TopGearForNextExport` | `0` (Auto) | Highest forward gear to include in one export when SimHub cannot supply the count. Select 1–12 on the plugin page; resets after a successful export. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
 | `SaveCaptureFrames` | `true` | Write `<car>.frames.csv` next to each screen-capture export: every frame's RPM and the lights seen. Replay it with `LovelyCarDataCapture.Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json` to check a capture again without driving it. |
 | `SaveTransitionFrames` | `false` | Keep cropped images before, during and after changes in the detected lights. Enable before starting a diagnostic capture. Export writes PNGs and a JSON manifest in a separate `<car>.transitions-...` folder. Keeps up to two examples of each change per gear, at most 24 transitions per gear and 64 overall (up to 192 images), within 64 MiB of retained pixels. The report identifies skipped repeats, limits or missing images. |

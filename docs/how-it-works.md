@@ -85,7 +85,8 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   car uses their middle value and flags it for an in-game check.
   Readings from driven gears take priority over neutral when both measured the same light. When every
   left/right pair is the same color and switches within 30 rpm, pairs use their earlier reading so
-  ATSR lights both sides together.
+  ATSR lights both sides together. If the game does not report its gear count, you can set the known
+  top gear for the next export; unvisited higher gears use fallback values and are listed in the file.
 - **How far behind the revs the game draws its lights**, in milliseconds: the delay that makes each
   light's switching on (rising revs) and off (falling revs) agree. Every frame is read against the revs
   that long before it, which cancels a game's fade (ACC) as well as its render lag. If the two still

@@ -59,6 +59,9 @@ namespace LovelyCarDataCapture
         /// </summary>
         public bool CopyMeasuredToOtherGears { get; set; }
 
+        /// <summary>Known highest forward gear for one export; zero uses SimHub and the gears driven.</summary>
+        public int TopGearForNextExport { get; set; }
+
         /// <summary>
         /// Write the raw frames of a screen capture next to its export, so it can be checked again later
         /// - by new code, or when a value looks odd - without driving it again.

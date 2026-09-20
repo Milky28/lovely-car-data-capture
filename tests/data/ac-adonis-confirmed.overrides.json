@@ -1,0 +1,7 @@
+{
+  "game": "assettocorsa",
+  "carId": "rss_gtm_adonis_v8_evo",
+  "ledNumber": 8,
+  "ledColor": { "0": "#FFFF0000" },
+  "redlineBlinkInterval": 140
+}

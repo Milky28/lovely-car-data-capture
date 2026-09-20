@@ -35,6 +35,8 @@ namespace LovelyCarDataCapture.Profile
         public static ComposeResult Compose(CaptureSession s, CaptureSettings cfg, RepoLookup lookup, DateTime capturedAt,
             string localOverrides = null, string previousExport = null)
         {
+            if (cfg.TopGearForNextExport < 0 || cfg.TopGearForNextExport > 12)
+                throw new ArgumentOutOfRangeException(nameof(cfg.TopGearForNextExport), "Top gear must be between 0 and 12.");
             var result = new ComposeResult();
             var notes = new List<string>();
             var details = new List<string>();
@@ -71,6 +73,16 @@ namespace LovelyCarDataCapture.Profile
                 : manual && s.Marks.MostLedMarks > 0 ? s.Marks.MostLedMarks : Math.Max(1, cfg.LedNumber);
             var p = baseline?.Clone() ?? NewProfile(s, cfg, newLeds, f1, notes);
             p.Normalize();
+            var addedGears = new List<string>();
+            for (int gear = 1; gear <= cfg.TopGearForNextExport; gear++)
+            {
+                string name = gear.ToString(CultureInfo.InvariantCulture);
+                if (p.GearOrder.Contains(name)) continue;
+                p.EnsureGear(name);
+                addedGears.Add(name);
+            }
+            if (cfg.TopGearForNextExport > 0)
+                notes.Add("Gears through " + cfg.TopGearForNextExport + " were requested for this export. Gears not driven use fallback values.");
             var screenGears = screen ? screenResult.Gears.Select(g => g.Gear) : new string[0];
             var capturedGears = (f1 ? s.F1.Gears : iracing ? s.IRacing.Gears : screen ? screenGears :
                 manual ? s.Marks.Gears : s.Redline.Gears.Keys).Distinct().ToList();
@@ -92,6 +104,19 @@ namespace LovelyCarDataCapture.Profile
             {
                 previousGears = PreviousCaptureRpm.Restore(p, s.CarId, previousExport, capturedGears, notes,
                     screen && screenResult.Layout.LedNumber == p.LedNumber ? screenResult.Layout.IsGap : null);
+            }
+            if (screen && baseline == null) KeepFallbacksAboveObservedDark(screenResult, p, previousGears, notes);
+            if (screen && baseline == null) KeepFallbacksAtObservedOn(screenResult, p, previousGears, notes);
+            // A repo file can itself omit a known gear. Copy the nearest lower gear only if neither
+            // the capture nor the previous export supplied its row.
+            foreach (var gear in addedGears.Where(g => !p.LedRpm[g].Any(v => v > 0)))
+            {
+                int rank = CarProfile.GearRank(gear);
+                var source = p.GearOrder.Where(g => !addedGears.Contains(g) && CarProfile.GearRank(g) >= 1 && CarProfile.GearRank(g) < rank &&
+                                                    p.LedRpm[g].Any(v => v > 0)).LastOrDefault();
+                if (source == null) continue;
+                p.LedRpm[gear] = (int[])p.LedRpm[source].Clone();
+                notes.Add("Gear " + gear + " was not captured; copied gear " + source + "'s values.");
             }
             if (screen && screenResult.Layout.LedNumber == p.LedNumber)
             {
@@ -219,6 +244,18 @@ namespace LovelyCarDataCapture.Profile
             var results = sr.Gears.OrderBy(g => CarProfile.GearRank(g.Gear)).ToList();
             bool mappable = p.LedNumber == layout.LedNumber;
 
+            // A smaller washed-out part of a simultaneous bank takes the larger part's colour.
+            // Keep the other banks' palette assignments: merging and renaming the whole ladder can
+            // turn an established blue bank cyan when a spurious green shade disappears.
+            foreach (var group in sr.ColorGroups.OrderBy(g => g.Slots.Count))
+            {
+                var same = sr.ColorGroups.Where(g => g.Slots.Count > group.Slots.Count &&
+                    group.Slots.All(a => g.Slots.All(b => SameSwitchBank(sr, a, b))))
+                    .OrderByDescending(g => g.Slots.Count).FirstOrDefault();
+                if (same == null) continue;
+                group.Hex = same.Hex;
+                group.Name = same.Name;
+            }
             details.Add("Rev lights read from the screen (rpm). Each value is the middle of the range it was seen " +
                         "switching on in; several climbs that agree closely mean a reliable value. Slots marked \"gap\" " +
                         "have room on the strip but never light.");
@@ -339,7 +376,7 @@ namespace LovelyCarDataCapture.Profile
             }
 
             ApplyScreenColors(sr, p, baseline, notes);
-            if (sr.BlinkIntervalMs.HasValue && (baseline == null || p.RedlineBlinkInterval == 0))
+            if (sr.BlinkIntervalMs.HasValue && !sr.AlternatingRedline && !LaterStageBlink(sr) && (baseline == null || p.RedlineBlinkInterval == 0))
                 p.RedlineBlinkInterval = sr.BlinkIntervalMs.Value;
 
             var bestGear = results.Where(r => r.CapturedCount > 0).OrderByDescending(r => r.CapturedCount)
@@ -496,13 +533,16 @@ namespace LovelyCarDataCapture.Profile
                     for (int led = 1; led <= p.LedNumber; led++)
                     {
                         if (layout.IsGap[led - 1] || row[led] != 0 || byLed[led].Count == 0) continue;
-                        row[led] = (int)(Math.Round(Median(byLed[led]) / 5.0) * 5);
+                        var bank = Enumerable.Range(0, p.LedNumber).Where(i => Trusted(gr.Leds[i]) && SameSwitchBank(sr, led - 1, i))
+                                             .Select(i => gr.Leds[i].Rpm).ToList();
+                        // A gear-dependent bank is stronger evidence than another gear's threshold.
+                        row[led] = (int)(Math.Round(Median(bank.Count > 0 && bank.Max() - bank.Min() <= MirrorRpm ? bank : byLed[led]) / 5.0) * 5);
                         filled.Add("gear " + gr.Gear + " LED " + led);
                     }
                 }
                 if (filled.Count > 0)
                     notes.Add("Missing switch-on readings for " + string.Join(", ", filled) +
-                              " were filled from the same lights in other gears. Check those gears in the game.");
+                              " were filled from a matching simultaneous bank in this gear where available, otherwise from the same lights in other gears. Check those gears in the game.");
             }
 
             if (baseline != null && bestGear != null && cfg.CopyMeasuredToOtherGears)
@@ -521,6 +561,19 @@ namespace LovelyCarDataCapture.Profile
                 FillUndrivenGears(p, baseline, bestGear, capturedGears, notes,
                     "Many cars use the same lights in every gear; capture the others if they differ.");
             }
+        }
+        // AC's five-light banks vary by about eight hue degrees under tone mapping. Require two
+        // independent gears agreeing on simultaneity before using that narrow colour tolerance.
+        private const double BankHueDegrees = 10;
+        private static bool LaterStageBlink(ScreenLedResult sr) => sr.SecondStageRpm.HasValue && sr.BlinkFromRpm.HasValue &&
+            sr.RedlineRpm.HasValue && sr.BlinkFromRpm.Value >= sr.SecondStageRpm.Value &&
+            sr.SecondStageRpm.Value > sr.RedlineRpm.Value + UniformRpm;
+        private static bool SameSwitchBank(ScreenLedResult sr, int a, int b)
+        {
+            if (a == b || sr.Layout.IsGap[a] || sr.Layout.IsGap[b] || sr.MeasuredColors[a].Hue < 0 || sr.MeasuredColors[b].Hue < 0 ||
+                HueGap(sr.MeasuredColors[a].Hue, sr.MeasuredColors[b].Hue) > BankHueDegrees) return false;
+            var paired = sr.Gears.Where(g => Trusted(g.Leds[a]) && Trusted(g.Leds[b])).ToList();
+            return paired.Count >= 2 && paired.All(g => Math.Abs(g.Leds[a].Rpm - g.Leds[b].Rpm) <= MirrorRpm);
         }
 
         private static void ReportUndrivenDifference(CarProfile p, ScreenLedResult sr, List<string> notes)
@@ -568,19 +621,77 @@ namespace LovelyCarDataCapture.Profile
             }
         }
 
+        // Leave a little headroom beyond the observed range; these are safe placeholders, not onsets.
+        private const int DarkFallbackMarginRpm = 50;
+        private static void KeepFallbacksAtObservedOn(ScreenLedResult sr, CarProfile p, List<string> previous, List<string> notes)
+        {
+            if (sr.Layout.LedNumber != p.LedNumber) return;
+            foreach (var entry in sr.ObservedOnUpperBounds)
+            {
+                var gear = sr.Gears.FirstOrDefault(g => g.Gear == entry.Key);
+                if (gear == null || previous.Contains(entry.Key) || !p.LedRpm.TryGetValue(entry.Key, out var row)) continue;
+                var changed = new List<string>();
+                for (int i = 0; i < entry.Value.Length; i++)
+                {
+                    if (sr.Layout.IsGap[i] || Trusted(gear.Leds[i]) || entry.Value[i] <= 0 || row[i + 1] >= entry.Value[i]) continue;
+                    row[i + 1] = (int)(Math.Ceiling(entry.Value[i] / 5.0) * 5);
+                    row[0] = Math.Max(row[0], row[i + 1]);
+                    changed.Add((i + 1) + " at " + row[i + 1]);
+                }
+                if (changed.Count > 0)
+                    notes.Add("Gear " + entry.Key + ": ambiguous pale background hid the dark-to-lit crossing for LED " + string.Join(", ", changed) +
+                        " rpm. Earlier borrowed thresholds were replaced by this gear's first repeatedly observed ON values. " +
+                        "These are unmeasured upper-bound fallbacks and may light late; the pale frames were not treated as dark. Capture another slow sweep to measure the crossings.");
+            }
+        }
+        private static void KeepFallbacksAboveObservedDark(ScreenLedResult sr, CarProfile p, List<string> previous, List<string> notes)
+        {
+            if (sr.Layout.LedNumber != p.LedNumber) return;
+            foreach (var bound in sr.DarkLowerBounds)
+            {
+                var measured = sr.Gears.FirstOrDefault(g => g.Gear == bound.Key);
+                if (previous.Contains(bound.Key) || measured == null || measured.Leds.Any(Trusted) || !p.LedRpm.TryGetValue(bound.Key, out var row)) continue;
+                var slots = Enumerable.Range(1, p.LedNumber).Where(i => !sr.Layout.IsGap[i - 1] && row[i] > 0).ToList();
+                if (slots.Count == 0 || slots.Min(i => row[i]) > bound.Value) continue;
+                int floor = (int)(Math.Ceiling((bound.Value + DarkFallbackMarginRpm) / 5.0) * 5);
+                int shift = floor - slots.Min(i => row[i]);
+                // Shift the borrowed row together, preserving simultaneous banks and the last-row
+                // ordering ATSR uses to identify the layout. Never flatten it to one equal value.
+                foreach (int i in slots) row[i] += shift;
+                row[0] = Math.Max(row[0] + shift, slots.Max(i => row[i]));
+                notes.Add("Gear " + bound.Key + " stayed dark through " + bound.Value + " rpm in sustained raw observations, but no switch-on was measured. " +
+                    "Borrowed thresholds were moved together by " + shift + " rpm so the first is " + floor +
+                    " rpm. These are unmeasured placeholders above the tested range, not measured onsets or proof the lights never appear. Capture a higher sweep to replace them.");
+            }
+        }
+
         private static void AddFinalBlinkNote(ScreenLedResult sr, CarProfile p, CarProfile baseline,
                                               LocalProfileOverrideResult overrides, List<string> notes)
         {
             if (overrides.BlinkInterval.HasValue)
             {
+                if (sr.AlternatingRedline)
+                    notes.Add("The confirmed " + overrides.BlinkInterval.Value + " ms on/off blink is an approximation of the observed colour alternation. " +
+                        "It uses the exported redline colour and cannot show the other colour; this is not a measured dark phase.");
                 if (sr.BlinkIntervalMs.HasValue)
                     notes.Add("The capture measured a blink of about " + sr.BlinkIntervalMs +
                               " ms; the confirmed local override of " + overrides.BlinkInterval.Value +
                               " ms is the final exported interval.");
                 return;
             }
+            if (sr.AlternatingRedline)
+            {
+                notes.Add("Alternating redline colours cannot be encoded as an on/off interval. The final interval is " +
+                    p.RedlineBlinkInterval + " ms; no doubled or halved timing was inferred from the colour changes.");
+                return;
+            }
             if (sr.BlinkIntervalMs.HasValue)
             {
+                if (LaterStageBlink(sr))
+                {
+                    notes.Add("Blinking begins in a later limiter stage, above the first colour change. The file has only one redline stage, so this later blink was not applied; the exported interval remains " + p.RedlineBlinkInterval + " ms.");
+                    return;
+                }
                 if (baseline != null && p.RedlineBlinkInterval != sr.BlinkIntervalMs.Value)
                     notes.Add("The capture measured a blink of about " + sr.BlinkIntervalMs +
                               " ms, but the repo value of " + p.RedlineBlinkInterval + " ms remains final.");
@@ -637,6 +748,10 @@ namespace LovelyCarDataCapture.Profile
 
             if (overrides.BlinkInterval.HasValue)
                 lines.Add("Redline blink: confirmed local override " + overrides.BlinkInterval.Value + " ms is final.");
+            else if (screen && sr != null && sr.AlternatingRedline)
+                lines.Add("Redline: alternating colours are not representable; one observed colour and interval " + p.RedlineBlinkInterval + " ms are final.");
+            else if (screen && sr != null && LaterStageBlink(sr))
+                lines.Add("Redline blink: the later limiter blink cannot share the first colour-change threshold; interval " + p.RedlineBlinkInterval + " ms remains final.");
             else if (screen && sr != null && sr.BlinkIntervalMs.HasValue && baseline != null &&
                      p.RedlineBlinkInterval != sr.BlinkIntervalMs.Value)
                 lines.Add("Redline blink: capture measured about " + sr.BlinkIntervalMs +
@@ -1022,7 +1137,7 @@ namespace LovelyCarDataCapture.Profile
                 RedlineBlinkInterval = f1 ? 50 : 0,
                 LedColor = DefaultColors(leds).ToList(),
             };
-            int top = Math.Max(s.Redline.TopGear, s.F1.Gears.Concat(s.IRacing.Gears).Concat(s.Marks.Gears).Select(CarProfile.GearRank).Where(r => r < 1000).DefaultIfEmpty(0).Max());
+            int top = Math.Max(Math.Max(s.Redline.TopGear, cfg.TopGearForNextExport), s.F1.Gears.Concat(s.IRacing.Gears).Concat(s.Marks.Gears).Select(CarProfile.GearRank).Where(r => r < 1000).DefaultIfEmpty(0).Max());
             p.GearOrder.Add("R");
             p.GearOrder.Add("N");
             for (int i = 1; i <= top; i++) p.GearOrder.Add(i.ToString(CultureInfo.InvariantCulture));

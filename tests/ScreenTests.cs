@@ -27,6 +27,288 @@ namespace LovelyCarDataCapture.Tests
 
         private static string DataPath(string name) => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", name);
 
+        private static void AcImageStrips()
+        {
+            foreach (string car in new[] { "akuro", "bayer" })
+            {
+                var detector = new StripDetector();
+                int[] counts = car == "akuro" ? new[] { 1, 2, 3, 4, 5, 6, 7, 8, 0, 10, 0, 10 }
+                                               : new[] { 5, 5, 5, 5, 5, 10, 10, 10, 10, 10, 10, 10 };
+                for (int i = 0; i < counts.Length; i++)
+                {
+                    var frame = LoadFrame("ac-images/" + car + "-transition-" + (i + 1).ToString("0000") + "-current.png");
+                    var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                    Equal(counts[i], blobs.Count, car + " transition " + (i + 1));
+                    if (car == "akuro" && counts[i] == 10)
+                    {
+                        Check(blobs.Take(4).All(b => b.Color.G > b.Color.R * 2), "Akuro green bank retained");
+                        Check(blobs.Skip(8).All(b => b.Color.R > b.Color.G * 2), "Akuro red bank retained");
+                    }
+                    if (car == "bayer")
+                        Check(blobs.Take(5).All(b => b.Width >= 15), "Bayer rectangles must not fragment into edges");
+                }
+            }
+        }
+
+        private static void AcAdonisPhases()
+        {
+            var session = new CaptureSession("AssettoCorsa", "rss_gtm_adonis_v8_evo");
+            foreach (var f in LoadFrames(DataPath("ac-adonis.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Check(screen.AlternatingRedline, "Adonis has repeated full-strip colour phases");
+            Equal("#FFFF0000", screen.RedlineColor, "First stable red phase is retained, not averaged purple");
+            Check(!screen.BlinkSeen && !screen.BlinkIntervalMs.HasValue, "Filtered low-RPM frames are not a redline blink");
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            Equal("#FFFF0000", result.Profile.LedColor[0], "Export actual red phase");
+            Equal(0, result.Profile.RedlineBlinkInterval, "Solid fallback, no inferred double-speed blink");
+            Check(result.Report.Any(l => l.Contains("cannot reproduce this alternation")), "Representation limit reported");
+            Check(result.Report.Any(l => l.Contains("red (rgb(") && l.Contains("blue (rgb(")), "Measured phase colours reported");
+            var detector = new StripDetector();
+            for (int i = 5; i <= 8; i++)
+            {
+                var frame = LoadFrame("ac-images/adonis-transition-" + i.ToString("0000") + "-current.png");
+                var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Equal(8, blobs.Count, "Adonis phase has eight lit LEDs");
+                Check(blobs.All(b => i % 2 == 1 ? b.Color.R > b.Color.B : b.Color.B > b.Color.R), "Image phase is red/blue, not dark");
+            }
+        }
+
+        private static void AcBayerFirstGear()
+        {
+            var session = new CaptureSession("AssettoCorsa", "rss_gtm_bayer_i6_evo");
+            foreach (var f in LoadFrames(DataPath("ac-bayer-0909.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            foreach (int slot in new[] { 6, 7, 8, 10, 11 })
+            {
+                var threshold = screen.Gears.Single(g => g.Gear == "1").Leds[slot];
+                Check(threshold != null && threshold.Uncertainty <= 20, "Gear1 cyan has its own narrow crossing");
+                Check(Math.Abs(threshold.Rpm - 5780) <= 20, "Gear1 cyan uses the observed crossing with measured display-delay correction");
+            }
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now,
+                File.ReadAllText(DataPath("ac-bayer-confirmed.overrides.json")));
+            foreach (int slot in new[] { 7, 8, 9, 11, 12 })
+            {
+                Equal("#FF00FFFF", result.Profile.LedColor[slot], "Confirmed cyan is final");
+                Check(result.Profile.LedRpm["1"][slot] < result.Profile.LedRpm["1"][0], "Gear1 cyan precedes redline");
+                Check(Math.Abs(result.Profile.LedRpm["5"][slot] - 6705) <= 20, "Confirmed gear5 cyan is preserved within measurement tolerance");
+            }
+            foreach (int slot in new[] { 1, 2, 4, 5, 6 })
+                Check(Math.Abs(result.Profile.LedRpm["5"][slot] - 6665) <= 20, "Confirmed gear5 green is preserved within measurement tolerance");
+            Equal(0, result.Profile.RedlineBlinkInterval, "User-confirmed solid redline overrides captured artifacts");
+            Check(result.Report.Any(l => l.Contains("confirmed local override 0 ms is final")), "Report identifies confirmed blink source");
+            var detector = new StripDetector();
+            foreach (string phase in new[] { "previous", "current", "following" })
+            {
+                var frame = LoadFrame("ac-images/bayer-0909-0014-" + phase + ".png");
+                Equal(phase == "previous" ? 5 : 10, detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height)).Count,
+                    "Bayer captured pixels show cyan onset");
+            }
+        }
+
+        private static void CompletedCrossingKeepsBounds()
+        {
+            var capture = new LedWindowCapture(2);
+            capture.Record("N", 1000, new[] { false, false });
+            capture.Record("N", 1090, new[] { false, false });
+            capture.Record("N", 1100, new[] { true, false });
+            capture.Record("N", 900, new[] { false, false });
+            capture.Record("N", 1200, new[] { false, false });
+            var led = capture.Result("N").Leds[0];
+            Equal(1090, led.HighestOff.Value, "Completed crossing retains its own dark bound");
+            Equal(1100, led.LowestOn, "Completed crossing retains its own lit bound");
+            Check(!led.Inconsistent && led.ClimbWidth == 10, "Unfinished climb cannot poison valid confidence");
+            capture.Record("N", 1300, new[] { true, false });
+            Check(capture.Result("N").Leds[0].ClimbSpread > 150, "Contradictory completed climbs still fail repeatability");
+            var contradictory = new LedWindowCapture(2);
+            contradictory.Record("1", 1000, new[] { false, false });
+            contradictory.Record("1", 1200, new[] { false, false });
+            contradictory.Record("1", 1090, new[] { false, false });
+            contradictory.Record("1", 1095, new[] { false, false });
+            contradictory.Record("1", 1100, new[] { true, false });
+            Check(contradictory.Result("1").Leds[0].Inconsistent, "Dark evidence before a crossing remains contradictory");
+        }
+
+        private static void LatestAcStages()
+        {
+            foreach (string car in new[] { "bayer", "adonis" })
+            {
+                var session = new CaptureSession("AssettoCorsa", "rss_gtm_" + car + (car == "bayer" ? "_i6_evo" : "_v8_evo"));
+                foreach (var f in LoadFrames(DataPath(car == "bayer" ? "ac-bayer-1319.csv" : "ac-adonis-1313.csv")))
+                    session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+                var screen = session.Screen.Result();
+                var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now,
+                    File.ReadAllText(DataPath("ac-" + car + "-confirmed.overrides.json")));
+                if (car == "bayer")
+                {
+                    foreach (int i in new[] { 1,2,4,5,6 }) Check(Math.Abs(result.Profile.LedRpm["N"][i] - 5215) <= 20, "Neutral green measured crossing");
+                    foreach (int i in new[] { 7,8,9,11,12 }) Check(Math.Abs(result.Profile.LedRpm["N"][i] - 5805) <= 20, "Neutral cyan measured crossing");
+                    Check(result.Profile.LedRpm["N"].Skip(1).All(v => v < result.Profile.LedRpm["N"][0]), "Neutral stages precede redline");
+                    Equal(0, result.Profile.RedlineBlinkInterval, "Confirmed solid Bayer preserved");
+                }
+                else
+                {
+                    var first = screen.Gears.Single(g => g.Gear == "5").Leds[0];
+                    Check(first != null && first.Uncertainty <= 15 && Math.Abs(first.Rpm - 6450) <= 10, "Adonis first green actual crossing retained");
+                    Check(result.Profile.LedRpm["5"][1] >= 6440, "No early borrowed first light");
+                    Check(result.Profile.LedRpm["5"][5] >= 6590, "Observed yellow upper bound replaces early borrowed value");
+                    Check(result.Report.Any(l => l.Contains("unmeasured upper-bound fallbacks") && l.Contains("may light late")), "Partial evidence stays explicitly uncertain");
+                    Equal(140, result.Profile.RedlineBlinkInterval, "Confirmed Adonis approximation preserved");
+                }
+            }
+        }
+
+        private static void UnknownBackgroundNeedsOwnColor()
+        {
+            var capture = new ScreenLedCapture();
+            for (int i = 0; i < 150; i++)
+                capture.Record("5", 5500 + i, i * 20, Enumerable.Range(0, 8).Select(s => new LitBlob {
+                    Left = 10 + s * 30, Right = 20 + s * 30, Color = new LedColor(185,205,250) }).ToList());
+            Check(!capture.Result().ObservedOnUpperBounds.Values.Any(row => row.Any(v => v > 0)), "Pale-only unknown data cannot invent a normal-light bound");
+        }
+
+        private static void SixthGearDarkFallbacks()
+        {
+            foreach (string car in new[] { "bayer", "adonis" })
+            {
+                string id = car == "bayer" ? "rss_gtm_bayer_i6_evo" : "rss_gtm_adonis_v8_evo";
+                string file = car == "bayer" ? "ac-bayer-0944.csv" : "ac-adonis-0949.csv";
+                var session = new CaptureSession("AssettoCorsa", id);
+                foreach (var f in LoadFrames(DataPath(file))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+                var screen = session.Screen.Result();
+                Equal(car == "bayer" ? 6628 : 6473, screen.DarkLowerBounds["6"], "Sustained raw-dark maximum");
+                var normal = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+                var confirmed = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now,
+                    File.ReadAllText(DataPath("ac-" + car + "-confirmed.overrides.json")));
+                var row = confirmed.Profile.LedRpm["6"];
+                var active = Enumerable.Range(1, confirmed.Profile.LedNumber).Where(i => !screen.Layout.IsGap[i - 1]).ToList();
+                Equal(car == "bayer" ? 6680 : 6525, active.Min(i => row[i]), "Placeholder remains above tested darkness");
+                Check(active.All(i => row[i] > screen.DarkLowerBounds["6"]), "No borrowed light appears inside observed dark range");
+                Check(active.Select(i => row[i]).Distinct().Count() > 1, "Preserve ATSR last-row group ordering");
+                Check(confirmed.Report.Any(l => l.Contains("unmeasured placeholders")), "Do not claim measured onsets");
+                foreach (string gear in normal.Profile.GearOrder.Where(g => g != "6"))
+                    SeqEqual(normal.Profile.LedRpm[gear], confirmed.Profile.LedRpm[gear], "Confirmed colour/blink override never changes another gear");
+                Equal(car == "bayer" ? 0 : 140, confirmed.Profile.RedlineBlinkInterval, "Confirmed blink selection");
+                if (car == "adonis")
+                {
+                    Equal(0, normal.Profile.RedlineBlinkInterval, "Automatic alternating fallback remains solid");
+                    Check(confirmed.Report.Any(l => l.Contains("not a measured dark phase")), "Blink approximation distinguished from observation");
+                    Check(confirmed.Report.Any(l => l.Contains("Without a confirmed override")), "Automatic fallback report is conditional");
+                }
+                // A repository/confirmed starting row is not a borrowed default and remains authoritative.
+                var starting = normal.Profile.Clone();
+                for (int i = 0; i < starting.LedRpm["6"].Length; i++)
+                    if (starting.LedRpm["6"][i] > 0) starting.LedRpm["6"][i] -= 1000;
+                var baseline = new RepoLookup { Status = RepoLookupStatus.Found, RelativePath = id + ".json", Text = starting.ToJson() };
+                var kept = ProfileComposer.Compose(session, new CaptureSettings(), baseline, DateTime.Now);
+                SeqEqual(starting.LedRpm["6"].Skip(1), kept.Profile.LedRpm["6"].Skip(1), "Even low starting-file LED thresholds are not inferred fallbacks");
+            }
+        }
+
+        private static void DarkBoundsRequireRawEvidence()
+        {
+            foreach (int kind in new[] { 0, 1, 2 })
+            {
+                var capture = new ScreenLedCapture();
+                for (int f = 0; f < 150; f++)
+                {
+                    int rpm = 800 + f * 10;
+                    var blobs = Enumerable.Range(0, 4).Where(i => rpm >= 1000 + i * 200)
+                        .Select(i => new LitBlob { Left = 10 + i * 30, Right = 20 + i * 30, Color = new LedColor(20,255,30) }).ToList();
+                    capture.Record("1", rpm, f * 20, blobs);
+                }
+                int frames = kind == 2 ? 60 : 150;
+                for (int f = 0; f < frames; f++)
+                {
+                    var blobs = kind == 1 ? new List<LitBlob> { new LitBlob { Left = 10, Right = 20, Color = new LedColor(40,60,255) } }
+                                          : new List<LitBlob>();
+                    capture.Record("6", 2000, 3000 + f * 20, blobs);
+                }
+                Equal(kind == 0, capture.Result().DarkLowerBounds.ContainsKey("6"), "Only sustained truly raw-empty frames establish a bound");
+            }
+        }
+
+        private static void UnknownSlotsKeepEvidence()
+        {
+            var capture = new LedWindowCapture(2);
+            capture.Record("1", 1000, new[] { false, false });
+            capture.Record("1", 1050, new[] { false, false });
+            capture.Record("1", 1100, new[] { false, false }, new[] { true, false });
+            capture.Record("1", 1150, new[] { false, true }, new[] { true, false });
+            capture.Record("1", 1600, new[] { false, true }, new[] { true, false });
+            capture.Record("1", 1700, new[] { true, true });
+            capture.Record("1", 2000, new[] { false, false }, new[] { true, true });
+            var result = capture.Result("1");
+            Equal(1125, result.Leds[1].Rpm, "Unaffected light keeps its own crossing");
+            Equal(650, result.Leds[0].ClimbWidth, "Unseen interval cannot narrow an uncertain crossing");
+            Check(!result.FlashStart.HasValue, "Unknown slots are not a dark redline flash");
+        }
+
+        private static void AlternatingPhasesNeedOverlap()
+        {
+            foreach (bool overlapping in new[] { true, false })
+            {
+                var capture = new ScreenLedCapture();
+                for (int phase = 0; phase < 6; phase++)
+                    for (int f = 0; f < 4; f++)
+                    {
+                        var color = phase % 2 == 0 ? new LedColor(255, 60, 70) : new LedColor(60, 70, 255);
+                        int rpm = overlapping ? 7000 : phase % 2 == 0 ? 6950 : 7050;
+                        capture.Record("3", rpm, (phase * 4 + f) * 20,
+                            Enumerable.Range(0, 4).Select(i => new LitBlob { Left = 10 + i * 30, Right = 20 + i * 30, Color = color }).ToList());
+                    }
+                Equal(overlapping, capture.Result().AlternatingRedline, "Colours at separate RPM stages must not count as alternation");
+            }
+        }
+
+        private static void AcMaccaLimiter()
+        {
+            var session = new CaptureSession("AssettoCorsa", "rss_gtm_macca_72_evo_v8");
+            foreach (var f in LoadFrames(DataPath("ac-macca.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            foreach (var row in p.LedRpm.Values)
+                for (int i = 1; i <= p.LedNumber; i++)
+                    if (!LedLayout.IsGapColor(p.LedColor[i])) Check(row[i] > 0, "Macca coloured slot has a threshold");
+            Equal("#FFFFFF00", p.LedColor[6], "Macca yellow survives limiter filtering");
+            Equal("#FFFF0000", p.LedColor[8], "Macca red survives limiter filtering");
+            Check(p.LedRpm["1"][1] < p.LedRpm["2"][1] && p.LedRpm["2"][1] < p.LedRpm["3"][1], "Macca gear differences retained");
+            Equal(0, p.RedlineBlinkInterval, "Macca first blue stage stays solid");
+            Check(result.Report.Any(l => l.Contains("later limiter stage")), "Later blink representation limit reported");
+        }
+
+        private static void AcBayerBanks()
+        {
+            var session = new CaptureSession("AssettoCorsa", "rss_gtm_bayer_i6_evo");
+            foreach (var f in LoadFrames(DataPath("ac-bayer.csv"))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            foreach (int i in new[] { 1, 2, 4, 5, 6 }) Equal("#FF00FF00", p.LedColor[i], "Bayer green bank");
+            Equal(p.LedRpm["3"][9], p.LedRpm["3"][10], "Bayer missing bank member uses its own gear");
+            Check(p.LedRpm["3"][9] > p.LedRpm["2"][9], "Bayer gear difference retained");
+
+            // Isolate bank logic from the old CSV's fragmented blob positions and missing widths.
+            var colors = new[] { new LedColor(138,255,182), new LedColor(138,255,182), new LedColor(138,255,182),
+                new LedColor(150,255,198), new LedColor(141,243,255), new LedColor(141,243,255) };
+            var sr = new ScreenLedResult { Layout = new StripLayout(new double[] { 10,30,50,70,90,110 }, new bool[6], 20),
+                MeasuredColors = colors, ColorGroups = LedPalette.Group(colors, new bool[6]) };
+            for (int gear = 1; gear <= 3; gear++)
+            {
+                int onset = 4000 + gear * 500;
+                var leds = Enumerable.Range(0, 6).Select(i => new LedThreshold(onset + (i < 4 ? 0 : 300),
+                    onset + (i < 4 ? 0 : 300) - 5, onset + (i < 4 ? 0 : 300) + 5)).ToArray();
+                if (gear == 3) leds[5] = null;
+                sr.Gears.Add(new GearLedResult(gear.ToString(), leds, null, 40));
+            }
+            var isolated = CarProfile.Parse(@"{""carName"":""bank"",""carId"":""bank"",""ledNumber"":6,
+                ""ledColor"":[""#00000000"",""#FF00FF00"",""#FF00FF00"",""#FF00FF00"",""#FF00FF00"",""#FF0000FF"",""#FF0000FF""],
+                ""ledRpm"":[{""1"":[0,0,0,0,0,0,0],""2"":[0,0,0,0,0,0,0],""3"":[0,0,0,0,0,0,0]}]}");
+            var apply = typeof(ProfileComposer).GetMethod("ApplyScreen", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            apply.Invoke(null, new object[] { sr, new CaptureSettings(), isolated, null, new List<string>(), new List<string>() });
+            Equal(5800, isolated.LedRpm["3"][6], "Missing light follows same-gear bank instead of 5050 cross-gear median");
+            Check(isolated.LedColor.Skip(1).Take(4).All(c => c == "#FF00FF00"), "Washed green bank stays green");
+            Equal("#FF0000FF", isolated.LedColor[5], "Other palette bank stays blue");
+        }
+
         private static PixelFrame LoadFrame(string name)
         {
             using (var bmp = new Bitmap(DataPath(name)))
@@ -272,6 +554,182 @@ namespace LovelyCarDataCapture.Tests
             Check(layout != null, "a single full frame is enough to see the strip: " + problem);
             Equal(12, layout.LedNumber, "slots seen in one frame");
             Equal(2, layout.GapCount, "gaps seen in one frame");
+        }
+
+        private static void LanzoBankGaps()
+        {
+            foreach (string car in new[] { "lanzo-v10", "lanzo-v10-evo2" })
+            {
+                var session = new CaptureSession("AssettoCorsa", "rss_gtm_" + car.Replace('-', '_'));
+                foreach (var f in LoadFrames(DataPath("ac-" + car + ".csv")))
+                    session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+                var screen = session.Screen.Result();
+                Equal(12, screen.Layout.LedNumber, car + " includes bank separators");
+                Check(screen.Layout.IsGap[2] && screen.Layout.IsGap[9], car + " gaps at3/10");
+                var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+                foreach (int slot in new[] { 3, 10 })
+                {
+                    Check(LedLayout.IsGapColor(profile.LedColor[slot]), "ATSR black/transparent gap color");
+                    Check(profile.LedRpm.Values.All(row => row[slot] == 0), "Gap never lights");
+                }
+            }
+            var frame = LoadFrame("ac-images/lanzo-evo2-full.png");
+            var calibration = new StripCalibration();
+            calibration.Add(new StripDetector().Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height)));
+            Equal(12, calibration.Build(out _).LedNumber, "Live Test image sees bank gaps");
+        }
+
+        private static void OrdinarySpacingIsNotBankGap()
+        {
+            foreach (var spacing in new[] { new[] { 30, 31, 32, 33, 34, 35, 36, 37, 38 },
+                new[] { 30, 30, 42, 30, 30, 30, 30, 30, 30 },
+                new[] { 30, 42, 30, 30, 30, 42, 30, 30, 30 },
+                new[] { 118, 80, 82, 82, 80, 118 } })
+            {
+                var calibration = new StripCalibration();
+                int x = 10;
+                var blobs = new List<LitBlob> { new LitBlob { Left = x, Right = x + 2 } };
+                foreach (int distance in spacing) { x += distance; blobs.Add(new LitBlob { Left = x, Right = x + 2 }); }
+                calibration.Add(blobs);
+                Equal(0, calibration.Build(out _).GapCount, "Perspective, isolated, or unmatched spacing is not a bank gap");
+            }
+        }
+
+        private static void RrreBmwDimRedPair()
+        {
+            var detector = new StripDetector();
+            foreach (var sample in new[] { new { Name = "0010", Count = 8 }, new { Name = "0031", Count = 0 }, new { Name = "0055", Count = 10 } })
+            {
+                var frame = LoadFrame("rrre-bmw-" + sample.Name + ".png");
+                var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Equal(sample.Count, blobs.Count, "BMW image " + sample.Name + " actual lit lights");
+                if (sample.Count != 10) continue;
+                Check(blobs.Skip(8).All(b => b.Color.Hue < 25 || b.Color.Hue > 340), "Recovered pair retains red color");
+                var calibration = new StripCalibration();
+                calibration.Add(blobs);
+                var layout = calibration.Build(out _);
+                Equal(12, layout.LedNumber, "BMW physical slots including bank gaps");
+                Check(layout.IsGap[2] && layout.IsGap[9], "BMW gaps at3/10");
+            }
+            // The saved CSV has already lost the dim pixels: preserve its measured flash,
+            // but do not pretend it contains the missing pair's threshold crossings.
+            var session = new CaptureSession("RRRE", "11536,BMW M4 GT3");
+            foreach (var f in LoadFrames(DataPath("rrre-bmw-m4-gt3.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var profile = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+            Equal("#00000000", profile.LedColor[0], "BMW flash keeps existing colors");
+            Check(Math.Abs(profile.RedlineBlinkInterval - 51) <= 5, "BMW measured fast flash unchanged");
+        }
+
+        private static void ProtechReflectiveOffPhase()
+        {
+            var session = new CaptureSession("AssettoCorsa", "rss_gtm_protech_p92_f6");
+            foreach (var f in LoadFrames(DataPath("ac-protech-p92-f6.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var screen = session.Screen.Result();
+            Check(!screen.AlternatingRedline, "Reflective OFF housings are not a second lit color phase");
+            Check(screen.RedlineMeasured.Saturation > 0.5, "Redline color comes from emissive ON phase");
+            var normal = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            Check(Math.Abs(normal.Profile.RedlineBlinkInterval - 122) <= 5, "Physical dark blink is exported");
+            Check(!normal.Report.Any(line => line.Contains("full strip alternates")), "No fabricated alternating-color report");
+            var confirmed = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now,
+                File.ReadAllText(DataPath("ac-protech-confirmed.overrides.json")));
+            Equal("#FF0040FF", confirmed.Profile.LedColor[0], "Confirmed bluer redline");
+            Equal(normal.Profile.RedlineBlinkInterval, confirmed.Profile.RedlineBlinkInterval, "Color-only override keeps measured blink");
+            foreach (var gear in normal.Profile.GearOrder)
+                SeqEqual(normal.Profile.LedRpm[gear], confirmed.Profile.LedRpm[gear], "Color override keeps all measured RPM values");
+            for (int slot = 1; slot <= 16; slot++)
+                Equal(normal.Profile.LedColor[slot], confirmed.Profile.LedColor[slot], "Only redline color changes");
+        }
+
+        private static void LuxBluePairStaysSeparate()
+        {
+            var detector = new StripDetector();
+            var calibration = new StripCalibration();
+            foreach (var sample in new[] { new { Name = "0006", Count = 6 }, new { Name = "0007", Count = 8 }, new { Name = "0008", Count = 7 } })
+            {
+                var frame = LoadFrame("ac-images/lux-" + sample.Name + ".png");
+                var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Equal(sample.Count, blobs.Count, "Lux image " + sample.Name + " separate physical lights");
+                calibration.Add(blobs);
+                if (sample.Name == "0006") continue;
+                Check(blobs.Any(b => Math.Abs(b.CenterX - 174) < 3) && blobs.Any(b => Math.Abs(b.CenterX - 204) < 3),
+                    "Two blue LEDs retain their real centers instead of a merged midpoint");
+                Check(blobs.Where(b => b.CenterX > 160 && b.CenterX < 217).All(b => b.Color.Hue > 210 && b.Color.Hue < 260),
+                    "Both recovered LEDs remain blue");
+            }
+            var layout = calibration.Build(out _);
+            Equal(8, layout.LedNumber, "Lux has eight physical slots");
+            Equal(0, layout.GapCount, "Lux has no phantom gap before red");
+        }
+
+        private static void LatestLuxProtechFullCaptures()
+        {
+            foreach (string car in new[] { "lux-v8", "protech-p92-f6" })
+            {
+                var session = new CaptureSession("AssettoCorsa", "rss_gtm_" + car.Replace('-', '_'));
+                string file = car == "lux-v8" ? "ac-lux-v8-1543.csv" : "ac-protech-p92-f6-1548.csv";
+                foreach (var f in LoadFrames(DataPath(file))) session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+                var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now,
+                    car == "lux-v8" ? null : File.ReadAllText(DataPath("ac-protech-confirmed.overrides.json")));
+                var p = result.Profile;
+                if (car == "lux-v8")
+                {
+                    Equal(8, p.LedNumber, "Whole Lux drive rejects merged blue midpoint");
+                    var expected = new[] { "#FF00FF00", "#FF00FF00", "#FF00FF00", "#FFFFFF00", "#FFFFFF00", "#FF0000FF", "#FF0000FF", "#FFFF0000" };
+                    for (int i = 0; i < expected.Length; i++) Equal(expected[i], p.LedColor[i + 1], "Lux physical color slot " + (i + 1));
+                }
+                else
+                {
+                    Equal(16, p.LedNumber, "Protech physical strip");
+                    for (int slot = 7; slot <= 10; slot++) Equal("#FFFF0000", p.LedColor[slot], "Protech central red bank");
+                    foreach (string gear in new[] { "N", "1", "2", "3", "4", "5" })
+                        Check(Math.Abs(p.LedRpm[gear][9] - p.LedRpm[gear][8]) <= 30, "Center pair learns same normal red timing in gear " + gear);
+                    Equal("#FF0040FF", p.LedColor[0], "Protech confirmed blue redline unchanged");
+                    Check(Math.Abs(p.RedlineBlinkInterval - 123) <= 5, "Latest Protech physical blink retained");
+                }
+                Check(result.AtsrProblems.Count == 0, "Full capture remains ATSR compatible: " + string.Join("; ", result.AtsrProblems));
+            }
+        }
+
+        private static void MergedMidpointRequiresExclusivePair()
+        {
+            foreach (bool separateMiddle in new[] { false, true })
+            {
+                var calibration = new StripCalibration();
+                void Add(int[] xs) => calibration.Add(xs.Select(x => new LitBlob { Left = x, Right = x }).ToList());
+                for (int i = 0; i < 30; i++)
+                {
+                    Add(new[] { 0, 30, 60, 90, 120 });
+                    Add(new[] { 0, 45, 90, 120 });
+                    Add(new int[0]);
+                }
+                if (separateMiddle) Add(new[] { 0, 30, 45, 60, 90, 120 });
+                var layout = calibration.Build(out _);
+                Equal(separateMiddle ? 6 : 5, layout.LedNumber, "An independently observed middle LED must survive");
+                Equal(separateMiddle, layout.SlotCenters.Any(x => Math.Abs(x - 45) < 1), "Only mutually exclusive merged midpoint is removed");
+            }
+        }
+
+        private static void FullChronologicalAcImageSequences()
+        {
+            foreach (string car in new[] { "lux-1543", "protech-1548" })
+            {
+                var detector = new StripDetector();
+                var calibration = new StripCalibration();
+                var files = Directory.GetFiles(DataPath("ac-images/" + car), "*.png")
+                    .OrderBy(path => Path.GetFileName(path).Substring(0, 15))
+                    .ThenBy(path => path.Contains("previous") ? 0 : path.Contains("current") ? 1 : 2).ToList();
+                Equal(192, files.Count, "All saved previous/current/following frames are exercised");
+                foreach (string path in files)
+                {
+                    var frame = LoadFrame(path);
+                    calibration.Add(detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height)));
+                }
+                var layout = calibration.Build(out _);
+                Equal(car == "lux-1543" ? 8 : 16, layout.LedNumber, "Full chronological image sequence " + car);
+                Equal(0, layout.GapCount, "No phantom physical gaps in " + car);
+            }
         }
 
         // ---------- thresholds, colours, redline ----------
@@ -801,6 +1259,42 @@ namespace LovelyCarDataCapture.Tests
                 Check(Math.Abs(row[4] - 6330) <= 35, "second capture first yellow pair remains near the confirmed RPM");
             }
             Equal(0, again.AtsrProblems.Count, "second capture keeps ATSR compatibility");
+        }
+
+        private static void ScreenRealAcevoKtmKnownTopGear()
+        {
+            var session = new CaptureSession("AssettoCorsaEVO", "KTM X Bow GT2");
+            foreach (var f in LoadFrames(DataPath("acevo-ktm-x-bow-gt2.frames.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+
+            var result = ProfileComposer.Compose(session, new CaptureSettings { TopGearForNextExport = 6 },
+                                                 null, new DateTime(2026, 9, 19));
+            var profile = result.Profile;
+            SeqEqual(new[] { -1, 0, 1, 2, 3, 4, 5, 6 }, profile.GearOrder.Select(CarProfile.GearRank),
+                     "the known six-speed gearbox is exported even though only three gears were driven");
+            foreach (var gear in new[] { "4", "5", "6" })
+                SeqEqual(profile.LedRpm["3"], profile.LedRpm[gear], "unvisited gear " + gear + " uses captured values");
+            Equal(9, profile.LedNumber, "KTM LED count including the centre gap");
+            Equal(0, result.AtsrProblems.Count, "six-gear KTM file works in ATSR");
+            Check(result.Report.Any(l => l.Contains("Gears through 6 were requested")), "report names the supplied gear count");
+
+            var repeat = ProfileComposer.Compose(session, new CaptureSettings(), null, new DateTime(2026, 9, 19),
+                                                 previousExport: profile.ToJson()).Profile;
+            foreach (var gear in new[] { "4", "5", "6" })
+                SeqEqual(profile.LedRpm[gear], repeat.LedRpm[gear], "later exports retain unvisited gear " + gear);
+
+            var shortFile = CarProfile.Parse(profile.ToJson());
+            foreach (var gear in new[] { "4", "5", "6" })
+            {
+                shortFile.GearOrder.Remove(gear);
+                shortFile.LedRpm.Remove(gear);
+            }
+            var fromShortRepo = ProfileComposer.Compose(session, new CaptureSettings { TopGearForNextExport = 6 },
+                                                       Found(shortFile.ToJson(), "assettocorsaevo/ktm-x-bow-gt2.json"),
+                                                       new DateTime(2026, 9, 19)).Profile;
+            foreach (var gear in new[] { "4", "5", "6" })
+                Check(fromShortRepo.LedRpm[gear].Skip(1).Any(v => v > 0),
+                      "known gear " + gear + " is filled even when the repo omitted it");
         }
 
         private static void ScreenRealMercedesClusters()

@@ -44,6 +44,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly TextBlock _status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
         private readonly Button _start;
         private readonly Button _stop;
+        private readonly ComboBox _topGear = new ComboBox { Width = 80, Margin = new Thickness(10, 0, 0, 0) };
 
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
                                      Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action pickFromStill, Action<string> say,
@@ -220,6 +221,7 @@ namespace LovelyCarDataCapture.Plugin
                                      "For when only one gear could be swept cleanly. Two gears that agree are pooled anyway. Without " +
                                      "this, unswept gears keep the repo file's values and the file ends up saying two different things.",
                                      v => _settings.CopyMeasuredToOtherGears = v));
+            panel.Children.Add(TopGear());
             panel.Children.Add(Check("Keep each capture's raw frames", settings.SaveCaptureFrames,
                                      "Writes <car>.frames.csv next to the export: every frame's RPM and the lights seen in it. " +
                                      "It lets a capture be checked again later, by a newer version of the plugin or when a value " +
@@ -391,6 +393,29 @@ namespace LovelyCarDataCapture.Plugin
             return row;
         }
 
+        private StackPanel TopGear()
+        {
+            _topGear.Items.Add("Auto");
+            for (int gear = 1; gear <= 12; gear++) _topGear.Items.Add(gear.ToString());
+            _topGear.SelectedIndex = _settings.TopGearForNextExport >= 0 && _settings.TopGearForNextExport <= 12
+                ? _settings.TopGearForNextExport : 0;
+            _topGear.SelectionChanged += (s, e) =>
+            {
+                _settings.TopGearForNextExport = _topGear.SelectedIndex;
+                _save();
+            };
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 4, 0, 4),
+                ToolTip = "If SimHub does not know the car's gear count, choose its highest forward gear before exporting. " +
+                          "Unreached gears use captured values as fallbacks. This returns to Auto after a successful export.",
+            };
+            row.Children.Add(new TextBlock { Text = "Top gear for next export", VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(_topGear);
+            return row;
+        }
+
         /// <summary>Keeps the buttons and the lines under them in step with what the capture is doing.</summary>
         private void Tick()
         {
@@ -399,6 +424,8 @@ namespace LovelyCarDataCapture.Plugin
             _stop.IsEnabled = running;
             _status.Text = _statusText();
             _status.Foreground = running ? Accent : Dim;
+            if (_topGear.SelectedIndex != _settings.TopGearForNextExport)
+                _topGear.SelectedIndex = _settings.TopGearForNextExport;
         }
 
         private PixelRect Box() => new PixelRect(_settings.ScreenBoxX, _settings.ScreenBoxY, _settings.ScreenBoxWidth, _settings.ScreenBoxHeight);

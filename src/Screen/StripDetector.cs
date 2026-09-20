@@ -126,6 +126,13 @@ namespace LovelyCarDataCapture.Screen
         private const int PositionSaturation = 90;
         // Include the edge/glow around a learned light and allow a few pixels of cockpit movement.
         private const int PositionPadding = 8;
+        // AC's small rectangular LEDs clip two channels to white, with the third above 200.
+        private const int WashedCoreBrightness = 200;
+        // Thin RRRE LEDs retain strong colour at one edge but wash out through the centre.
+        // Weaker columns may extend nearby strong support; they cannot start a light.
+        private const double EdgeSaturationFraction = 0.7;
+        private const int StrongEdgeColumns = 2;
+        private const double EdgeHueTolerance = 30;
         private PixelRect _positionRegion;
         private int _frameWidth, _frameHeight;
         private int[] _top, _bottom, _maskTop, _maskBottom;
@@ -149,9 +156,12 @@ namespace LovelyCarDataCapture.Screen
             // pixels stay separate, even when none is white enough for the white-core detector.
             if (smeared || blobs.Count == 0)
             {
+                var clusters = DetectColored(frame, x0, x1, y0, y1, _cfg.ClusterBrightness, _cfg.ClusterMaxWidth, out bool clusterSmear);
                 var cores = DetectCores(frame, x0, x1, y0, y1);
+                // Mixed strips can have white-centred yellow lights beside saturated green/red ones.
+                // Prefer the complete bright-colour strip when its glow has separated cleanly.
+                if (!clusterSmear && clusters.Count > cores.Count && (clusters.Count >= 3 || smeared)) return clusters;
                 if (cores.Count > 0) return cores;
-                var clusters = DetectColored(frame, x0, x1, y0, y1, _cfg.ClusterBrightness, _cfg.ClusterMaxWidth, out _);
                 if (clusters.Count >= 3 || smeared && clusters.Count > 0) return clusters;
                 if (smeared) return cores;
             }
@@ -225,17 +235,46 @@ namespace LovelyCarDataCapture.Screen
                                             int minBrightness, int maxWidth, out bool smeared)
         {
             var litColumn = new bool[x1 - x0];
+            var weakColumn = new bool[x1 - x0];
+            var strongColumn = new bool[x1 - x0];
+            var columnHue = new double[x1 - x0];
             for (int x = x0; x < x1; x++)
             {
-                int count = 0;
+                int count = 0, saturated = 0, weak = 0, red = 0, green = 0, blue = 0;
                 for (int y = y0; y < y1; y++)
                 {
                     if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
                     int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                    if (max >= minBrightness && max - min >= _cfg.MinSaturation) count++;
+                    if (max >= minBrightness && max - min >= _cfg.MinSaturation * EdgeSaturationFraction)
+                    { weak++; red += r; green += g; blue += b; }
+                    if (max >= minBrightness && max - min >= _cfg.MinSaturation &&
+                        (max - min) / (double)max >= _cfg.HaloSaturation) saturated++;
+                    if (max >= minBrightness && (max - min >= _cfg.MinSaturation ||
+                        max >= _cfg.CoreBrightness && min >= WashedCoreBrightness &&
+                        HasColoredNeighbour(frame, x, y, x0, x1))) count++;
                 }
                 litColumn[x - x0] = count >= _cfg.MinColumnPixels;
+                weakColumn[x - x0] = weak >= _cfg.MinColumnPixels;
+                strongColumn[x - x0] = saturated >= _cfg.MinColumnPixels;
+                columnHue[x - x0] = weak == 0 ? -1 : new LedColor(red / weak, green / weak, blue / weak).Hue;
+            }
+
+            for (int x = 0; x < litColumn.Length; x++)
+            {
+                if (!weakColumn[x]) continue;
+                int end = x;
+                while (end + 1 < weakColumn.Length && weakColumn[end + 1]) end++;
+                var run = Enumerable.Range(x, end - x + 1).ToList();
+                var seeds = run.Where(nx => strongColumn[nx]).ToList();
+                // Recover a whole connected light, not an arbitrary radius around a colour edge.
+                // Weak housings without their own strong seeds cannot borrow a nearby LED's seeds.
+                if (run.Count <= maxWidth && seeds.Count >= StrongEdgeColumns && run.All(nx =>
+                {
+                    double hue = Math.Abs(columnHue[seeds[0]] - columnHue[nx]);
+                    return Math.Min(hue, 360 - hue) <= EdgeHueTolerance;
+                })) foreach (int nx in run) litColumn[nx] = true;
+                x = end;
             }
 
             var blobs = new List<LitBlob>();
@@ -247,7 +286,11 @@ namespace LovelyCarDataCapture.Screen
                 if (!lit && start >= 0)
                 {
                     int left = start + x0, right = i - 1 + x0;
-                    if (blobs.Count > 0 && left - blobs[blobs.Count - 1].Right <= _cfg.MergeGap)
+                    // A short valley may separate two complete LEDs whose combined glow is wider
+                    // than one light. Keep them separate even in the wider cluster fallback.
+                    if (blobs.Count > 0 && left - blobs[blobs.Count - 1].Right <= _cfg.MergeGap &&
+                        (right - blobs[blobs.Count - 1].Left + 1 <= _cfg.MaxWidth ||
+                         blobs[blobs.Count - 1].Width < _cfg.MinWidth || right - left + 1 < _cfg.MinWidth))
                         blobs[blobs.Count - 1].Right = right;
                     else
                         blobs.Add(new LitBlob { Left = left, Right = right });
@@ -259,6 +302,19 @@ namespace LovelyCarDataCapture.Screen
             blobs.RemoveAll(b => b.Width < _cfg.MinWidth || b.Width > maxWidth);
             foreach (var blob in blobs) blob.Color = MeasureColor(frame, blob, y0, y1, minBrightness);
             return blobs;
+        }
+
+        // Tone mapping can wash the middle of a small rectangular LED completely white. Keep that
+        // bridge only beside coloured pixels on the same scanline, never across the dark LED gap.
+        private bool HasColoredNeighbour(PixelFrame frame, int x, int y, int x0, int x1)
+        {
+            for (int nx = Math.Max(x0, x - _cfg.HaloReach); nx < Math.Min(x1, x + _cfg.HaloReach + 1); nx++)
+            {
+                frame.GetPixel(nx, y, out int r, out int g, out int b);
+                int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                if (max >= _cfg.MinBrightness && max - min >= Math.Max(PositionSaturation, _cfg.MinSaturation)) return true;
+            }
+            return false;
         }
 
         /// <summary>Lights found by their white-hot centres, each coloured by the glow around it.</summary>

@@ -48,7 +48,19 @@ namespace LovelyCarDataCapture.Screen
         // Real LED centers drift a few pixels; AC wheel occlusions can also leave isolated centers
         // between LEDs. Only positions near a repeatedly seen center may join a light's group.
         private const double PositionReachPx = 6;
+        // Lanzo's two bank separators are narrower than a missing LED pitch. Require a
+        // matching mirrored pair between banks, with ordinary spacing on both sides.
+        // Outlying single lights on a curved dash do not establish a bank separator.
+        private const double BankGapRatio = 1.3;
+        private const double OrdinarySpacingRatio = 1.15;
+        private const double MatchingGapTolerance = 0.1;
+        // A merged pair sits halfway across one normal spacing; a few repeated frames
+        // establish the separate neighbours without assuming a maximum physical LED count.
+        private const double MergedPairSpanTolerance = 0.2;
+        private const double MergedMidpointTolerance = 0.1;
+        private const int MergedPairFrames = 3;
         private readonly List<double> _centers = new List<double>();
+        private readonly List<double[]> _observations = new List<double[]>();
         private int _frames;
         private int _mostInOneFrame;
 
@@ -58,6 +70,7 @@ namespace LovelyCarDataCapture.Screen
             _frames++;
             if (blobs.Count > _mostInOneFrame) _mostInOneFrame = blobs.Count;
             foreach (var b in blobs) _centers.Add(b.CenterX);
+            _observations.Add(blobs.Select(b => b.CenterX).ToArray());
         }
 
         public int Frames => _frames;
@@ -122,6 +135,26 @@ namespace LovelyCarDataCapture.Screen
                         else merged.Add(new List<double>(kept[i]));
                     }
                     kept = merged;
+                    // Bloom can alternate between two real LEDs and their merged midpoint.
+                    // Require repeated simultaneous neighbours and no coexistence with the midpoint:
+                    // a genuinely separate light must not be discarded just for close spacing.
+                    for (int i = kept.Count - 2; i > 0; i--)
+                    {
+                        double left = kept[i - 1].Average(), middle = kept[i].Average(), right = kept[i + 1].Average();
+                        if (Math.Abs((right - left) - typical) > typical * MergedPairSpanTolerance ||
+                            Math.Abs(middle - (left + right) / 2) > typical * MergedMidpointTolerance) continue;
+                        int pairs = 0;
+                        bool coexists = false;
+                        foreach (var frame in _observations)
+                        {
+                            bool l = frame.Any(x => Math.Abs(x - left) <= PositionReachPx);
+                            bool m = frame.Any(x => Math.Abs(x - middle) <= PositionReachPx);
+                            bool r = frame.Any(x => Math.Abs(x - right) <= PositionReachPx);
+                            if (m && (l || r)) { coexists = true; break; }
+                            if (l && r) pairs++;
+                        }
+                        if (!coexists && pairs >= MergedPairFrames) kept.RemoveAt(i);
+                    }
                 }
             }
             var lights = kept.Select(g => g.Average())
@@ -141,12 +174,19 @@ namespace LovelyCarDataCapture.Screen
             var spacings = new List<double>();
             for (int i = 1; i < lights.Count; i++) spacings.Add(lights[i] - lights[i - 1]);
             double pitch = Median(spacings.Where(s => s <= Median(spacings) * 1.4).ToList());
+            var bankGaps = Enumerable.Range(0, spacings.Count).Where(i => spacings[i] >= pitch * BankGapRatio).ToList();
+            bool pairedBankGaps = bankGaps.Count == 2 && bankGaps[0] + bankGaps[1] == spacings.Count - 1 &&
+                bankGaps[0] > 0 && bankGaps[1] < spacings.Count - 1 &&
+                bankGaps[1] - bankGaps[0] > 1 &&
+                Math.Abs(spacings[bankGaps[0]] - spacings[bankGaps[1]]) <= pitch * MatchingGapTolerance &&
+                spacings.Where((s, i) => !bankGaps.Contains(i)).All(s => s <= pitch * OrdinarySpacingRatio);
 
             var centers = new List<double> { lights[0] };
             var gaps = new List<bool> { false };
             for (int i = 1; i < lights.Count; i++)
             {
                 int steps = (int)Math.Round((lights[i] - lights[i - 1]) / pitch);
+                if (pairedBankGaps && bankGaps.Contains(i - 1)) steps = Math.Max(2, steps);
                 if (steps < 1) steps = 1;
                 for (int s = 1; s < steps; s++)
                 {

@@ -1,0 +1,13 @@
+{
+  "game": "assettocorsa",
+  "carId": "rss_gtm_bayer_i6_evo",
+  "ledNumber": 12,
+  "ledColor": {
+    "7": "#FF00FFFF",
+    "8": "#FF00FFFF",
+    "9": "#FF00FFFF",
+    "11": "#FF00FFFF",
+    "12": "#FF00FFFF"
+  },
+  "redlineBlinkInterval": 0
+}

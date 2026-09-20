@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1 - 2026-09-20
+
+### Capture accuracy
+
+- Recover washed-out LED centres and dim coloured edges while rejecting reflective unlit housings.
+- Preserve narrow gaps between LED banks and separate real lights from merged glow positions.
+- Keep normal rev-light colours separate from later limiter animations, and avoid inventing an on/off blink for alternating colour phases.
+- Preserve supported LED crossings when other positions show indicators or an ambiguous pale background.
+- Keep completed crossing bounds when a later climb is unfinished, and use matching simultaneous banks for missing readings where supported.
+- Constrain borrowed RPM rows with sustained raw dark evidence or repeatedly observed lit values, reporting these as unmeasured fallbacks.
+
+### Exports
+
+- Add **Top gear for next export** (Auto or 1-12) for cars whose gear count is unavailable. Include unreached gears using the existing fallback rules and reset the choice after a successful export.
+
+### Validation and known limits
+
+- Add raw-capture and image regressions for AC, AC EVO and RaceRoom, alongside the existing regression suite.
+- Image and replay checks do not establish live wheel accuracy for every car. Unmeasured fallback values still need an in-game check.
+- Alternating limiter colours cannot be represented by the output format; a solid colour or an explicit local blink override remains an approximation.
+
 ## 0.2.0 - 2026-09-19
 
 ### Capture accuracy

@@ -635,6 +635,11 @@ namespace LovelyCarDataCapture
                 }
                 copied = Settings.CopyToAtsrDeveloperFolder && CopyToAtsrDeveloperFolder(session.GameName, session.CarId, json, result.Report, utf8);
                 File.WriteAllText(reportPath, string.Join(Environment.NewLine, result.Report) + Environment.NewLine, utf8);
+                if (Settings.TopGearForNextExport != 0)
+                {
+                    Settings.TopGearForNextExport = 0;
+                    this.SaveCommonSettings("CaptureSettings", Settings);
+                }
                 _lastExportPath = path;
                 _lastReportPath = reportPath;
                 SimHub.Logging.Current.Info(LogPrefix + "Exported " + path + " (" + result.Source + "). Report: " + reportPath);

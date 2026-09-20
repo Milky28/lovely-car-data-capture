@@ -12,6 +12,9 @@ namespace LovelyCarDataCapture.Screen
     {
         public StripLayout Layout;
         public List<GearLedResult> Gears = new List<GearLedResult>();
+        // Sustained raw-empty observations are lower bounds, never measured switch-on thresholds.
+        public Dictionary<string, int> DarkLowerBounds = new Dictionary<string, int>();
+        public Dictionary<string, int[]> ObservedOnUpperBounds = new Dictionary<string, int[]>();
         /// <summary>Colour measured for each slot below the redline; a black colour for gaps and unseen slots.</summary>
         public LedColor[] MeasuredColors;
         public List<LedPalette.ColorGroup> ColorGroups = new List<LedPalette.ColorGroup>();
@@ -27,6 +30,8 @@ namespace LovelyCarDataCapture.Screen
         public string RedlineColor;
         /// <summary>What the strip actually measured above the redline, before it was matched to a colour.</summary>
         public LedColor RedlineMeasured;
+        public bool AlternatingRedline;
+        public LedColor FirstRedlinePhase, OtherRedlinePhase;
         /// <summary>RPM where the strip changes colour a second time, for cars with a two-stage redline.</summary>
         public int? SecondStageRpm;
         public string SecondStageColor;
@@ -97,7 +102,8 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Per frame, whether the strip was in its redline state; null where it couldn't be told.</summary>
         private bool?[] _redline;
         /// <summary>Frames where an indicator was taken out, so a light looks dark that may really be lit.</summary>
-        private bool[] _indicatorFrame = new bool[0];
+        private bool[][] _indicatorSlots = new bool[0][];
+        private Dictionary<string, double> _palePrelightHues = new Dictionary<string, double>();
 
         public bool HasData => _recorded.Count > 0;
         /// <summary>No more frames can be kept: <see cref="MaxSamples"/> have been recorded.</summary>
@@ -166,6 +172,7 @@ namespace LovelyCarDataCapture.Screen
             }
             var layout = result.Layout;
 
+            FindAlternatingRedline(layout, result);
             DropIndicators(layout, result);
 
             var lit = new bool[_samples.Count][];
@@ -205,13 +212,18 @@ namespace LovelyCarDataCapture.Screen
             result.BlinkSeen = firstLook.BlinkSeen;
 
             FindRedline(lit, hues, result);
+            if (result.AlternatingRedline)
+            {
+                result.RedlineMeasured = result.FirstRedlinePhase;
+                result.RedlineColor = LedPalette.Classify(result.FirstRedlinePhase, out string firstName);
+                LedPalette.Classify(result.OtherRedlinePhase, out string otherName);
+                result.Notes.Add("The full strip alternates between " + firstName + " (" + result.FirstRedlinePhase + ") and " +
+                    otherName + " (" + result.OtherRedlinePhase + "). The car file holds only one redline colour and an on/off blink, " +
+                    "so it cannot reproduce this alternation. Without a confirmed override, the first observed phase, " + firstName + ", is used as a solid fallback.");
+            }
             // Found once more with the redline known: PMR's C8.R comes back from each dark phase with only
             // some of its lights, in its blue redline colour, which isn't a full strip but is the redline.
             blink = FindBlinks(lit, layout, result, _redline);
-            // A frame an indicator was taken out of can't say whether that light was lit, so it doesn't
-            // count towards any threshold: kept in, the light seems to go dark and come straight back on.
-            for (int i = 0; i < blink.Length && i < _indicatorFrame.Length; i++)
-                if (_indicatorFrame[i]) blink[i] = true;
             // Just after a shift the screen still shows the old gear for as long as the game lags - about
             // 90 ms in PMR - while telemetry already has the new gear and its lower revs: every upshift
             // would read as the lights coming on far too low. Those frames count for nothing.
@@ -253,9 +265,11 @@ namespace LovelyCarDataCapture.Screen
             double Ceiling(string gear) => result.RedlineByGear.TryGetValue(gear, out var own) ? own.LowestAbove + RedlineMarginRpm : overall;
             var window = new LedWindowCapture(layout.LedNumber);
             for (int i = 0; i < _samples.Count; i++)
-                if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i]);
+                if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i], _indicatorSlots[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
             AverageWithSwitchOff(lit, blink, Ceiling, result);
+            FindObservedOnUpperBounds(blink, Ceiling, result);
+            FindDarkLowerBounds(blink, result);
             result.Notes.AddRange(_lagNotes);
 
             ReportSolidRedline(lit, result);
@@ -270,6 +284,132 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>How far from its usual colour a light has to be to count as showing something else.</summary>
         private const double IndicatorDegrees = 30;
 
+        // Require a substantial RPM separation and sustained background before a normal light.
+        private const int PalePrelightSeparationRpm = 300;
+        private const int ObservedOnFrames = 3;
+        private Dictionary<string, double> PalePrelightHues(StripLayout layout, double[] own)
+        {
+            var result = new Dictionary<string, double>();
+            foreach (var gear in _samples.GroupBy(s => s.Gear))
+            {
+                bool Normal(Sample s) => s.X.Select((x, b) => new { Slot = layout.SlotOf(x), Color = s.Colors[b] })
+                    .Any(b => b.Slot >= 0 && own[b.Slot] >= 0 && b.Color.Saturation >= PaleSaturation &&
+                        HueDistance(b.Color.Hue, own[b.Slot]) <= IndicatorDegrees);
+                int firstNormal = gear.Where(Normal).Select(s => s.Rpm).DefaultIfEmpty(0).Min();
+                var pale = gear.Where(s => s.Rpm < firstNormal - PalePrelightSeparationRpm &&
+                    s.X.Select(layout.SlotOf).Where(i => i >= 0).Distinct().Count() == layout.LedNumber - layout.GapCount &&
+                    s.Colors.All(c => c.Saturation < PaleSaturation) &&
+                    Spread(s.Colors.Select(c => c.Hue).ToList()) <= OneColourDegrees).ToList();
+                if (pale.Count < DarkEvidenceFrames || pale.Last().TimeMs - pale.First().TimeMs < DarkEvidenceMs) continue;
+                result[gear.Key] = UsualHue(pale.SelectMany(s => s.Colors).Select(c => c.Hue).ToList());
+            }
+            return result;
+        }
+
+        private void FindObservedOnUpperBounds(bool[] blink, Func<string, double> ceiling, ScreenLedResult result)
+        {
+            var own = OwnHues(result.Layout);
+            int[] consecutive = new int[result.Layout.LedNumber], first = new int[result.Layout.LedNumber];
+            string previousGear = null;
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var sample = _samples[i];
+                if (sample.Gear != previousGear) { Array.Clear(consecutive, 0, consecutive.Length); previousGear = sample.Gear; }
+                if (!_palePrelightHues.ContainsKey(sample.Gear)) continue;
+                if (!result.ObservedOnUpperBounds.TryGetValue(sample.Gear, out var bounds))
+                    result.ObservedOnUpperBounds[sample.Gear] = bounds = new int[result.Layout.LedNumber];
+                for (int slot = 0; slot < bounds.Length; slot++)
+                {
+                    bool on = !blink[i] && sample.Rpm <= ceiling(sample.Gear) && !_indicatorSlots[i][slot] && own[slot] >= 0 &&
+                        sample.X.Select((x, b) => new { Slot = result.Layout.SlotOf(x), Color = sample.Colors[b] }).Any(b => b.Slot == slot &&
+                            b.Color.Saturation >= PaleSaturation && HueDistance(b.Color.Hue, own[slot]) <= IndicatorDegrees);
+                    if (!on) { consecutive[slot] = 0; continue; }
+                    if (consecutive[slot]++ == 0) first[slot] = sample.Rpm;
+                    if (consecutive[slot] >= ObservedOnFrames && bounds[slot] == 0) bounds[slot] = first[slot];
+                }
+            }
+        }
+
+        // A brief dropout or shift cannot establish that another gear's thresholds are too low.
+        private const int DarkEvidenceMs = 1000;
+        private const int DarkEvidenceFrames = 30;
+        private const int DarkEvidenceBandRpm = 50;
+        private void FindDarkLowerBounds(bool[] blink, ScreenLedResult result)
+        {
+            if (!result.Gears.Any(g => g.CapturedCount >= 3)) return;
+            var unmeasured = new HashSet<string>(result.Gears.Where(g => g.CapturedCount == 0).Select(g => g.Gear));
+            var run = new List<int>();
+            long gearStart = 0;
+            void Finish()
+            {
+                if (run.Count < DarkEvidenceFrames) return;
+                int first = run[0], last = run[run.Count - 1];
+                if (_recorded[last].TimeMs - _recorded[first].TimeMs < DarkEvidenceMs) return;
+                int maximum = run.Max(i => _recorded[i].Rpm);
+                if (run.Count(i => _recorded[i].Rpm >= maximum - DarkEvidenceBandRpm) < DarkEvidenceFrames) return;
+                string gear = _recorded[first].Gear;
+                if (!result.DarkLowerBounds.TryGetValue(gear, out int old) || maximum > old) result.DarkLowerBounds[gear] = maximum;
+            }
+            for (int i = 0; i < _recorded.Count; i++)
+            {
+                if (i == 0 || _recorded[i].Gear != _recorded[i - 1].Gear)
+                { Finish(); run.Clear(); gearStart = _recorded[i].TimeMs; }
+                // Only genuinely empty detector output counts. Removed fixtures/indicators remain
+                // unknown, even if processing subsequently makes their frame look dark.
+                bool dark = unmeasured.Contains(_recorded[i].Gear) && _recorded[i].X.Length == 0 &&
+                    _recorded[i].TimeMs - gearStart >= DarkEvidenceMs && !blink[i] &&
+                    (_redline == null || _redline[i] != true) && !_indicatorSlots[i].Any(v => v);
+                if (!dark || i > 0 && _recorded[i].TimeMs - _recorded[i - 1].TimeMs > AlternatingFrameGapMs)
+                { Finish(); run.Clear(); }
+                if (dark) run.Add(i);
+            }
+            Finish();
+        }
+
+        // Four stable, adjacent phases prove two complete colour cycles, rather than a second RPM stage.
+        private const int AlternatingPhaseCount = 4;
+        // Both colours must recur in overlapping RPM ranges while the revs stay nearly steady.
+        private const int AlternatingRpmSpan = 150;
+        private const int AlternatingFrameGapMs = 100;
+        private void FindAlternatingRedline(StripLayout layout, ScreenLedResult result)
+        {
+            var runs = new List<Tuple<int, int, LedColor>>();
+            int start = -1;
+            LedColor phase = default;
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var sample = _samples[i];
+                var colors = sample.Colors.Where(c => c.Hue >= 0).ToList();
+                bool full = sample.X.Select(layout.SlotOf).Where(s => s >= 0).Distinct().Count() >= layout.LedNumber - layout.GapCount;
+                  // Reflective OFF housings can carry a stable blue-grey hue. Both alternating
+                  // phases need saturated light evidence, not merely different hue readings.
+                  if (!full || colors.Count < 3 || colors.Any(c => c.Saturation < PaleSaturation) ||
+                      Spread(colors.Select(c => c.Hue).ToList()) > OneColourDegrees ||
+                    i > 0 && (sample.Gear != _samples[i - 1].Gear || sample.TimeMs - _samples[i - 1].TimeMs > AlternatingFrameGapMs))
+                { runs.Clear(); start = -1; continue; }
+                var color = new LedColor((int)colors.Average(c => c.R), (int)colors.Average(c => c.G), (int)colors.Average(c => c.B));
+                if (start < 0) { start = i; phase = color; continue; }
+                if (HueDistance(color.Hue, phase.Hue) <= OneColourDegrees) continue;
+                if (i - start < MinBlinkFrames || sample.TimeMs - _samples[start].TimeMs > MaxBlinkMs) runs.Clear();
+                else runs.Add(Tuple.Create(start, i - 1, phase));
+                start = i;
+                phase = color;
+                if (runs.Count < AlternatingPhaseCount) continue;
+                var last = runs.Skip(runs.Count - AlternatingPhaseCount).ToList();
+                if (HueDistance(last[0].Item3.Hue, last[1].Item3.Hue) <= RedlineHueShift ||
+                    HueDistance(last[0].Item3.Hue, last[2].Item3.Hue) > OneColourDegrees ||
+                    HueDistance(last[1].Item3.Hue, last[3].Item3.Hue) > OneColourDegrees) continue;
+                var a = last.Where((r, n) => n % 2 == 0).SelectMany(r => Enumerable.Range(r.Item1, r.Item2 - r.Item1 + 1)).Select(n => _samples[n].Rpm).ToList();
+                var b = last.Where((r, n) => n % 2 == 1).SelectMany(r => Enumerable.Range(r.Item1, r.Item2 - r.Item1 + 1)).Select(n => _samples[n].Rpm).ToList();
+                  if (Math.Max(a.Max(), b.Max()) - Math.Min(a.Min(), b.Min()) > AlternatingRpmSpan ||
+                      Math.Max(a.Min(), b.Min()) > Math.Min(a.Max(), b.Max())) continue;
+                result.AlternatingRedline = true;
+                result.FirstRedlinePhase = last[0].Item3;
+                result.OtherRedlinePhase = last[1].Item3;
+                return;
+            }
+        }
+
         /// <summary>
         /// Each slot's usual colour: the one it shows most often while lit. A light climbing through the
         /// strip stays lit for seconds in its own colour, where an indicator flickers - the ACC Huracán
@@ -277,17 +417,39 @@ namespace LovelyCarDataCapture.Screen
         /// at any RPM. Frames with several lights all one colour are left out: that's the redline, a
         /// blink coming back, or a fade (ACC) part way into one, and the limiter is held for long.
         /// </summary>
+        private const int FullNormalColourFrames = 3;
         private double[] OwnHues(StripLayout layout)
         {
             var perSlot = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<double>()).ToArray();
+            var fullStrip = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<double>()).ToArray();
+            // A later limiter animation can spend longer in mixed colours than the normal sweep.
+            // Learn each light below its gear's first full-strip colour state.
+            var ceilings = _samples.Where(s => s.X.Select(layout.SlotOf).Where(x => x >= 0).Distinct().Count() >= layout.LedNumber - layout.GapCount - 1 &&
+                                               s.Colors.Length >= 3 && Spread(s.Colors.Select(c => c.Hue).ToList()) <= OneColourDegrees)
+                                   .GroupBy(s => s.Gear).ToDictionary(g => g.Key, g => g.Min(s => s.Rpm));
             foreach (var sample in _samples)
             {
+                if (ceilings.TryGetValue(sample.Gear, out int ceiling) && sample.Rpm >= ceiling) continue;
                 var slots = sample.X.Select(layout.SlotOf).ToArray();
                 var lights = Enumerable.Range(0, slots.Length).Where(b => slots[b] >= 0 && sample.Colors[b].Hue >= 0).ToList();
                 if (lights.Count >= 3 && Spread(lights.Select(b => sample.Colors[b].Hue).ToList()) <= OneColourDegrees) continue;
-                foreach (int b in lights) perSlot[slots[b]].Add(sample.Colors[b].Hue);
+                bool full = lights.Select(b => slots[b]).Distinct().Count() == layout.LedNumber - layout.GapCount;
+                foreach (int b in lights)
+                {
+                    perSlot[slots[b]].Add(sample.Colors[b].Hue);
+                    if (full) fullStrip[slots[b]].Add(sample.Colors[b].Hue);
+                }
             }
-            return perSlot.Select(h => h.Count == 0 ? -1 : UsualHue(h)).ToArray();
+            // A complete mixed strip below its colour-change ceiling shows the normal colours
+            // together. Prefer repeated evidence there to isolated reflections before a late LED lights.
+            return perSlot.Select((h, i) =>
+            {
+                double original = h.Count == 0 ? -1 : UsualHue(h);
+                if (fullStrip[i].Count < FullNormalColourFrames) return original;
+                double complete = UsualHue(fullStrip[i]);
+                // Correct a conflicting colour, not ordinary brightness-dependent hue drift.
+                return HueDistance(original, complete) > IndicatorDegrees ? complete : original;
+            }).ToArray();
         }
 
         /// <summary>The middle of the most crowded 30-degree stretch of the hue circle.</summary>
@@ -315,30 +477,37 @@ namespace LovelyCarDataCapture.Screen
         {
             int lights = layout.LedNumber - layout.GapCount;
             var own = OwnHues(layout);
-            _indicatorFrame = new bool[_samples.Count];
+            _palePrelightHues = PalePrelightHues(layout, own);
+            _indicatorSlots = Enumerable.Range(0, _samples.Count).Select(_ => new bool[layout.LedNumber]).ToArray();
             var seen = new int[layout.LedNumber];
             var colours = Enumerable.Range(0, layout.LedNumber).Select(_ => new List<LedColor>()).ToArray();
             for (int i = 0; i < _samples.Count; i++)
             {
                 var s = _samples[i];
                 var slots = s.X.Select(layout.SlotOf).ToArray();
+                // A persistent pale full-strip state well before the normal lights is ambiguous
+                // background, not a redline. Keep its slots unknown, never infer darkness from it.
+                var pale = Enumerable.Range(0, slots.Length).Where(b => slots[b] >= 0 &&
+                    _palePrelightHues.TryGetValue(s.Gear, out double hue) && s.Colors[b].Saturation < PaleSaturation &&
+                    HueDistance(s.Colors[b].Hue, hue) <= IndicatorDegrees).ToList();
                 var off = Enumerable.Range(0, slots.Length)
                                     .Where(b => slots[b] >= 0 && own[slots[b]] >= 0 && s.Colors[b].Hue >= 0 &&
                                                 HueDistance(s.Colors[b].Hue, own[slots[b]]) > IndicatorDegrees)
                                     .ToList();
+                off = off.Union(pale).ToList();
                 if (off.Count == 0) continue;
                 int litNow = slots.Count(x => x >= 0);
                 var huesNow = Enumerable.Range(0, slots.Length).Where(b => slots[b] >= 0 && s.Colors[b].Hue >= 0)
                                         .Select(b => s.Colors[b].Hue).ToList();
                 bool full = litNow >= lights - 1;
                 bool oneColour = huesNow.Count >= 2 && Spread(huesNow) <= OneColourDegrees;
-                if (full && (oneColour || off.Count * 2 >= litNow)) continue;     // the redline state
+                if (pale.Count == 0 && full && (oneColour || off.Count * 2 >= litNow)) continue;     // the redline state
                 // A game that fades (ACC) catches the strip part way into or out of its redline colour:
                 // several lights, all that colour. An indicator is one or two lights.
-                if (!full && oneColour && off.Count == litNow && litNow >= 3) continue;
+                if (pale.Count == 0 && !full && oneColour && off.Count == litNow && litNow >= 3) continue;
 
                 foreach (int b in off) { seen[slots[b]]++; colours[slots[b]].Add(s.Colors[b]); }
-                _indicatorFrame[i] = true;
+                foreach (int b in off) _indicatorSlots[i][slots[b]] = true;
                 var keep = Enumerable.Range(0, slots.Length).Where(b => !off.Contains(b)).ToList();
                 s.X = keep.Select(b => s.X[b]).ToArray();
                 s.Colors = keep.Select(b => s.Colors[b]).ToArray();
@@ -857,6 +1026,12 @@ namespace LovelyCarDataCapture.Screen
                 while (k < n && count[k] == 0 && _samples[k].Gear == _samples[start].Gear) k++;
                 int end = k;                        // first frame with anything lit
                 if (start == 0 || end >= n) continue;
+                if (result.AlternatingRedline && result.RedlineRpm.HasValue &&
+                    _samples[start].Rpm < result.RedlineRpm.Value - RedlineMarginRpm) continue;
+                // Filtering an indicator colour can empty a frame even though the captured strip
+                // was fully lit. A colour phase is not a physical dark phase.
+                if (Enumerable.Range(start, end - start).Any(i => _recorded[i].X.Select(layout.SlotOf)
+                    .Where(s => s >= 0).Distinct().Count() >= lights - 1)) continue;
 
                 // A full strip on each side, allowing a frame or two of fade in between: a game that
                 // fades its lights catches some of them part way on.
@@ -927,7 +1102,8 @@ namespace LovelyCarDataCapture.Screen
                     falls[b.Gear] = perSlot;
                 }
                 for (int s = 0; s < result.Layout.LedNumber; s++)
-                    if (lit[i - 1][s] && !lit[i][s]) perSlot[s].Add((a.Rpm + b.Rpm) / 2.0);
+                    if (!_indicatorSlots[i - 1][s] && !_indicatorSlots[i][s] && lit[i - 1][s] && !lit[i][s])
+                        perSlot[s].Add((a.Rpm + b.Rpm) / 2.0);
             }
 
             var gaps = new List<int>();
@@ -1159,6 +1335,7 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>A strip that stays lit above the redline says so, so a file claiming it blinks can be checked.</summary>
         private void ReportSolidRedline(bool[][] lit, ScreenLedResult result)
         {
+            if (result.AlternatingRedline) return;
             if (!result.RedlineRpm.HasValue && !result.BlinkSeen && !result.FlashOwnMs.HasValue && _samples.Count > 0)
             {
                 // No colour change and no blink: either the limiter was never reached, or the car has no

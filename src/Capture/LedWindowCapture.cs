@@ -39,6 +39,7 @@ namespace LovelyCarDataCapture.Capture
             {
                 LowestOn = Enumerable.Repeat(int.MaxValue, leds).ToArray();
                 HighestOff = Enumerable.Repeat(-1, leds).ToArray();
+                FirstClimbHighestOff = Enumerable.Repeat(-1, leds).ToArray();
                 DarkInClimb = new bool[leds];
                 MeasuredInClimb = new bool[leds];
                 OffInClimb = Enumerable.Repeat(-1, leds).ToArray();
@@ -48,6 +49,7 @@ namespace LovelyCarDataCapture.Capture
 
             public readonly int[] LowestOn;
             public readonly int[] HighestOff;
+            public readonly int[] FirstClimbHighestOff;
             /// <summary>Seen dark earlier in the current climb.</summary>
             public readonly bool[] DarkInClimb;
             /// <summary>A missed lit frame cannot create another switch-on in the same climb.</summary>
@@ -76,7 +78,7 @@ namespace LovelyCarDataCapture.Capture
         }
 
         /// <summary>Records a sample from a lit/dark flag per LED, index 0 = leftmost.</summary>
-        public void Record(string gear, int rpm, bool[] lit)
+        public void Record(string gear, int rpm, bool[] lit, bool[] unknown = null)
         {
             if (string.IsNullOrEmpty(gear) || rpm <= 0 || lit == null) return;
             if (!_gears.TryGetValue(gear, out var g))
@@ -88,7 +90,7 @@ namespace LovelyCarDataCapture.Capture
             bool anyLit = false;
             for (int i = 0; i < _ledCount && i < lit.Length; i++) if (lit[i]) { anyLit = true; break; }
 
-            if (!anyLit && rpm >= FullStripRpm(g))
+            if (!anyLit && !(unknown?.Any(v => v) ?? false) && rpm >= FullStripRpm(g))
             {
                 // Whole strip dark where it should be fully lit: the redline flash.
                 if (rpm < g.FlashStart) g.FlashStart = rpm;
@@ -105,7 +107,7 @@ namespace LovelyCarDataCapture.Capture
                 {
                     if (g.LowestOn[i] == int.MaxValue || rpm < g.LowestOn[i] - ReArmBelowOnRpm)
                     {
-                        g.DarkInClimb[i] = !(i < lit.Length && lit[i]);
+                        g.DarkInClimb[i] = !(unknown != null && i < unknown.Length && unknown[i]) && !(i < lit.Length && lit[i]);
                         g.MeasuredInClimb[i] = false;
                         g.OffInClimb[i] = -1;
                     }
@@ -116,6 +118,9 @@ namespace LovelyCarDataCapture.Capture
             g.Samples++;
             for (int i = 0; i < _ledCount; i++)
             {
+                // A colour used by an indicator says nothing about this slot's rev-light state.
+                // Retain the previous dark bound so a long unseen crossing stays a wide window.
+                if (unknown != null && i < unknown.Length && unknown[i]) continue;
                 if (!(i < lit.Length && lit[i]))
                 {
                     if (g.MeasuredInClimb[i]) continue;
@@ -126,6 +131,7 @@ namespace LovelyCarDataCapture.Capture
                 else if (g.DarkInClimb[i])
                 {
                     if (rpm < g.LowestOn[i]) g.LowestOn[i] = rpm;
+                    if (g.OffInClimb[i] >= 0 && g.ClimbMidpoints[i].Count == 0) g.FirstClimbHighestOff[i] = g.HighestOff[i];
                     if (g.OffInClimb[i] >= 0) g.ClimbMidpoints[i].Add((g.OffInClimb[i] + rpm) / 2.0);
                     if (g.OffInClimb[i] >= 0) g.ClimbWidths[i].Add(rpm - g.OffInClimb[i]);
                     g.DarkInClimb[i] = false;
@@ -159,6 +165,13 @@ namespace LovelyCarDataCapture.Capture
                 var climbs = g.ClimbMidpoints[i];
                 if (climbs.Count > 0)
                 {
+                    // An unfinished later climb may raise HighestOff without another switch-on.
+                    // Keep earlier contradictory dark evidence, but ignore a later unfinished climb.
+                    if (climbs.Count == 1)
+                    {
+                        off = g.FirstClimbHighestOff[i];
+                        on = (int)Math.Round(climbs[0] + g.ClimbWidths[i][0] / 2);
+                    }
                     // The middle climb rather than the widest window: one bad frame (a light bloomed
                     // into its neighbour, a missed RPM reading) then moves the value by nothing.
                     leds[i] = new LedThreshold(RoundTo(Median(climbs), 5), off >= 0 ? off : (int?)null, on)

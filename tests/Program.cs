@@ -32,6 +32,18 @@ namespace LovelyCarDataCapture.Tests
                 return 0;
             }
 
+            Run("Completed crossing bounds survive later unfinished climbs", CompletedCrossingKeepsBounds);
+            Run("Latest Bayer neutral and Adonis fifth preserve supported stages", LatestAcStages);
+            Run("Unknown background alone never creates an observed-on bound", UnknownBackgroundNeedsOwnColor);
+            Run("Sustained sixth-gear dark evidence constrains borrowed RPM rows", SixthGearDarkFallbacks);
+            Run("Filtered sightings and brief darkness cannot establish a dark bound", DarkBoundsRequireRawEvidence);
+            Run("Bayer first-gear cyan evidence survives other slots indicators", AcBayerFirstGear);
+            Run("Unknown LED slots preserve unaffected crossings and wide bounds", UnknownSlotsKeepEvidence);
+            Run("AC Adonis alternates real red and blue phases without a fabricated blink", AcAdonisPhases);
+            Run("Alternating phases require stable overlapping RPM evidence", AlternatingPhasesNeedOverlap);
+            Run("AC image strips preserve saturated banks and washed centres", AcImageStrips);
+            Run("AC Macca normal colours survive the later limiter animation", AcMaccaLimiter);
+            Run("AC Bayer simultaneous banks keep colors and gear-specific fallbacks", AcBayerBanks);
             Run("Slug follows the README examples", SlugExamples);
             Run("CarProfile round-trips the repo layout", ProfileRoundTrip);
             Run("Export backups preserve each previous JSON and report", ExportBackupsKeepPreviousFiles);
@@ -70,6 +82,14 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen detector finds the lights in real frames", ScreenDetectorOnFrames);
             Run("Screen calibration finds the strip's gaps", ScreenCalibration);
             Run("Screen calibration works from a single frame", ScreenCalibrationFromOneFrame);
+            Run("Lanzo captures preserve their two narrow bank gaps", LanzoBankGaps);
+            Run("Ordinary nonuniform spacing does not invent bank gaps", OrdinarySpacingIsNotBankGap);
+            Run("RRRE BMW dim red pair survives while dark frames stay dark", RrreBmwDimRedPair);
+            Run("Protech reflective OFF housings preserve its real redline blink", ProtechReflectiveOffPhase);
+            Run("Lux blue pair keeps separate centers without a phantom gap", LuxBluePairStaysSeparate);
+            Run("Latest full Lux layout and Protech retained blink remain valid", LatestLuxProtechFullCaptures);
+            Run("Merged midpoint requires mutually exclusive real neighbor pair", MergedMidpointRequiresExclusivePair);
+            Run("Complete chronological AC image sequences keep correct layouts", FullChronologicalAcImageSequences);
             Run("Screen capture matches the AMS2 Audi's repo values", ScreenThresholdsMatchRepoFile);
             Run("Screen colors are grouped and named", ScreenColorsAreGrouped);
             Run("Screen capture reports a two-stage redline", ScreenTwoStageRedline);
@@ -103,6 +123,7 @@ namespace LovelyCarDataCapture.Tests
             Run("A BMW GT3 capture keeps paired lights together", ScreenRealPmrBmwGt3Pairs);
             Run("The confirmed PMR Mustang capture retains its timings and colours", ScreenRealPmrMustang);
             Run("The second Mustang capture starts its redline at the first dark flash", ScreenRealPmrMustangDarkFirstFlash);
+            Run("A KTM capture includes known but unvisited gears", ScreenRealAcevoKtmKnownTopGear);
             Run("Dark-first coloured flashes keep each gear's initial onset", DarkFirstFlashUsesEachGearsInitialEdge);
             Run("Missing frames do not move a coloured flash earlier", MissedFramesDoNotAdvanceColourFlash);
             Run("A fast climb keeps the initial dark flash boundary", DarkFirstFlashCanSpanAFastClimb);
