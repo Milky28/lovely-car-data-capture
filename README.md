@@ -12,6 +12,9 @@ reads them from telemetry.
 
 ## Install
 
+Current release: [v0.2.1](https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.1),
+with improved screen detection and a top-gear export option. See the [changelog](CHANGELOG.md) for details.
+
 1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases/latest).
 2. Close SimHub and copy the DLL into the SimHub folder (usually `C:\Program Files (x86)\SimHub`).
 3. Start SimHub and enable **Lovely Car Data Capture** when asked. Its page is under
@@ -39,7 +42,11 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
    what's being recorded.
 
    <img src="docs/images/capturing.jpg" width="420" alt="The recording panel over ACC: gear 2, 6768 rpm, 6 lights lit, 791 frames">
-5. Press **Stop and export**.
+5. If SimHub cannot report the car's gear count and you could not reach the higher gears, set
+   **Top gear for next export** to the car's highest forward gear (1–12). Unreached gears use
+   fallback values; check the report and verify them in game. The choice resets to **Auto** after
+   a successful export.
+6. Press **Stop and export**.
 
 The car file and its report are written to `Documents\SimHub\LovelyCarDataCapture\<game>\`.
 Replacing an export saves its previous JSON and report in that game's `backups` folder first.
@@ -97,7 +104,8 @@ pull request.
 | Game | How the lights are read | Tested |
 | --- | --- | --- |
 | AMS2, ACC, LMU, PMR, AC, AC EVO | Off the screen | Yes, against selected cars checked in game |
-| RaceRoom and others | Off the screen | Not yet |
+| RaceRoom | Off the screen | Capture and image regression tests; live wheel validation still needed |
+| Other games | Off the screen | Not yet |
 | F1 2021–2026, iRacing | Telemetry | Not yet in game |
 
 ## More
