@@ -14,11 +14,13 @@ namespace LovelyCarDataCapture.Tests
     {
         private static int _failed, _passed;
         private static bool _showReports;
+        private static string _filter;
 
         private static int Main(string[] args)
         {
             string repoData = null;
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--repo-data") repoData = args[i + 1];
+            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--filter") _filter = args[i + 1];
             _showReports = args.Contains("--show-reports");
             if (args.Contains("--overlay")) { ShowOverlay(); return 0; }
             if (args.Contains("--settings")) { ShowSettingsPage(); return 0; }
@@ -157,12 +159,19 @@ namespace LovelyCarDataCapture.Tests
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
 
             Console.WriteLine();
+            // A filter that matches nothing must not look like a clean pass.
+            if (_filter != null && _passed + _failed == 0)
+            {
+                Console.WriteLine("No tests match \"" + _filter + "\".");
+                return 1;
+            }
             Console.WriteLine(_failed == 0 ? $"All {_passed} tests passed." : $"{_failed} failed, {_passed} passed.");
             return _failed == 0 ? 0 : 1;
         }
 
         private static void Run(string name, Action test)
         {
+            if (_filter != null && name.IndexOf(_filter, StringComparison.OrdinalIgnoreCase) < 0) return;
             try
             {
                 test();

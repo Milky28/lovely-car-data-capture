@@ -17,7 +17,8 @@ tests/bin/Release/net48/LovelyCarDataCapture.Tests.exe
 - References SimHub's DLLs from `C:\Program Files (x86)\SimHub\` (override with `SIMHUB_INSTALL_PATH`).
   SimHub must be installed to build.
 - The test runner is a console app (`tests/Program.cs` lists every test; `tests/ScreenTests.cs` holds
-  the screen ones). All must pass before any commit (47 at handoff). There is no xUnit/NUnit.
+  the screen ones). All must pass before any commit (121 at v0.2.1). There is no xUnit/NUnit.
+  `--filter <text>` runs only tests whose name contains the text, for quick iteration.
 - Replay a saved drive: `... Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json --game <game> --car <id>`.
 
 ## Installing for the user to test
@@ -58,8 +59,9 @@ Every value was set against a real drive; if you change one, all replay tests mu
 
 ## Regression data
 
-`tests/data` holds real captures, each checked by eye in game (AMS2 M8/Audi, ACC McLaren/Ginetta/
-Huracán, LMU SC63, PMR Viper/C8.R/R8). A fix for a new car should add its `.frames.csv` there and a
+`tests/data` holds real captures from AMS2, ACC, LMU, PMR, AC, AC EVO and RaceRoom, plus AC
+screenshot fixtures in `tests/data/ac-images` (see its README for provenance). Files named
+`*confirmed*` hold values the owner checked in game. A fix for a new car should add its `.frames.csv` there and a
 test asserting the values the user confirmed in game. Expected accuracy against confirmed files is
 about ±10-20 rpm; 40-60 in neutral/1st or on the last light before the redline.
 
@@ -75,16 +77,21 @@ about ±10-20 rpm; 40-60 in neutral/1st or on the last light before the redline.
 - Don't post on Discord or contact ATSR's developer.
 - Commit messages: plain summary line, no "Generated with" footer in PR bodies to the upstream repo.
 
-## State at handoff (2026-09-18)
+## Current state (2026-09-20)
 
-- `main` is ahead of `origin/main` by this file and `e6c62f1` (capture limits: announce full at 72,000
-  frames, 500 ms idle loop, export on SimHub close). Built, tested, installed locally; **not pushed**.
-  A v0.1.1 patch release with it was proposed but not approved. v0.1.0 is the published release.
+- v0.2.1 is the published release (https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.1).
+  `main` has later documentation commits; published assets were deliberately left as released.
+- `tools/package-release.ps1` builds, tests and packages a release into `artifacts/<version>/`. It
+  does not commit, tag, install or publish.
+- `review/` is untracked local material (captures, calibration trials, a nested Lovely Car Data
+  checkout). Never stage it or clean it away. Tests don't depend on it.
+- Checked in game: selected AMS2, ACC, LMU, PMR, AC and AC EVO cars. RaceRoom has replay/image tests
+  but no live wheel check. F1 and iRacing (telemetry) are untested in game.
 - Upstream PRs from the owner's fork (clone at `C:\Users\jerky\Documents\LovelyCarData`, remote
-  `fork`): Lovely-Sim-Racing/lovely-car-data#48 (new cars: ACC Ginetta G55 GT4, PMR Corvette C8.R,
-  PMR R8 LMP900) and #49 (corrections: AMS2 McLaren 720S GT3 Evo x2, PMR Viper LED 1). Awaiting review.
-- Not yet submitted: LMU SC63 fix (`src_data/lmu/hyper-lambo-sc63-2024.jsonc` in the upstream repo -
-  LEDs 6-8 yellow together ~7400, 9-10 red together ~7675).
-- Untested in game: AC, AC EVO, RaceRoom (screen) and F1 / iRacing (telemetry).
+  `fork`): Lovely-Sim-Racing/lovely-car-data#48, #49, #50 and #51, all awaiting review. The owner is
+  holding further submissions (including the LMU SC63 fix: LEDs 6-8 yellow together ~7400, 9-10 red
+  together ~7675) until these are approved. Don't prepare or suggest new upstream PRs until then.
+- Don't assume the DLL installed in SimHub matches the latest build.
 - Companion tool: RPM LED Builder, `C:\Users\jerky\Documents\rpm-led-builder` (single `index.html`,
-  GitHub Pages at https://milky28.github.io/rpm-led-builder/).
+  GitHub Pages at https://milky28.github.io/rpm-led-builder/). Separate repo; confirm which project
+  is meant before editing.

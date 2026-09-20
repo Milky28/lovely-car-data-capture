@@ -15,6 +15,8 @@ Test runner options:
 
 - `--repo-data <path to lovely-car-data/data>` round-trips every car file in a local clone.
 - `--live-repo` checks the GitHub lookup (needs internet).
+- `--filter <text>` runs only the tests whose name contains the text (not case-sensitive), for
+  example `--filter Bayer`. It exits with an error if nothing matches.
 - `--show-reports` prints the reports and JSON the compose tests produce.
 
 ## Packaging a local release
