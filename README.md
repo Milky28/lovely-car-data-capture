@@ -12,8 +12,8 @@ reads them from telemetry.
 
 ## Install
 
-Current release: [v0.2.1](https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.1),
-with improved screen detection and a top-gear export option. See the [changelog](CHANGELOG.md) for details.
+Current release: [v0.2.2](https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.2),
+with screen detection fixes for lights that blow out, drift in colour or only light at the redline. See the [changelog](CHANGELOG.md) for details.
 
 1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases/latest).
 2. Close SimHub and copy the DLL into the SimHub folder (usually `C:\Program Files (x86)\SimHub`).

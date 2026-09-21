@@ -1,36 +1,53 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 - 2026-09-21
 
-- Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
-  and blue shades from being renamed now only applies when the name is far from the measured hue.
+Screen reading fixes, every one found by checking a capture against the car in game.
+
+### Lights the detector missed or split
+
+- Read a light that blows out to white through its middle as one light. Colour survives only at its
+  edges, so PMR's R8 LMS GT4 Evo was read as 19 lights instead of 10, its green named cyan, and its
+  limiter flash missed. Lights are separated by dark housing, so this cannot join two of them.
+- Find a light whose blown-out centre keeps its colour. PMR's Corvette C7.R sits its top lights on a
+  violet backing that joins them into one run too wide to keep, and their centres are white in two
+  channels only, so a frame with nine lights lit was read as seven.
 - Give back sightings dropped as an indicator where the light stayed lit through the drift. A light
   reads greener alone than with a yellow neighbour lit, and PMR's Ford GTLM GTE lost every sighting of
   lights 2 and 7 over 450 rpm that way, exporting them as 0, which lights them from idle on the wheel.
   Only the switch-on windows use those frames back; colours and the redline still ignore them.
-- Find a light whose blown-out centre keeps its colour. PMR's Corvette C7.R sits its top lights on a
-  violet backing that joins them into one run too wide to keep, and their centres are white in two
-  channels only, so a frame with nine lights lit was read as seven.
-- Need several sightings before a light's colour counts as its own. PMR's Corvette C7.R lights 9 and
-  10 only come on at the redline, and light 9 took the limiter's purple from a single frame. Both now
-  fall back to the redline colour, and the report names them.
-- Ignore a pale colour change that is just the strip blowing out into one of its own colours as the
-  last lights come on. PMR's MC12 GT1 was given a yellow redline that turned the whole wheel yellow
-  where the game changes nothing; it now exports a transparent redline at the limiter.
+
+### Colours
+
+- Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
+  and blue shades from being renamed now only applies when the name is far from the measured hue.
 - Let a strongly dominant channel name a colour whatever the hue ladder had to call it. Two shades of
   the same warm red were being named red and orange, which gave PMR's AMG GT4 an orange centre pair.
   A game's orange keeps far more green than a warm red, so it is still read as orange.
-- Read a light that blows out to white through its middle as one light. Colour survives only at its
-  edges, so PMR's R8 LMS GT4 Evo was read as 19 lights instead of 10, its green named cyan, and its
-  limiter flash missed. Lights are separated by dark housing, so this cannot join two of them.
-- Measure the redline from crossings with the whole strip lit where there are any. A car whose own red
-  is close to its redline red could otherwise read a washed-out frame lower down as the redline, which
-  put PMR's Vantage GT4 about 130 rpm early in fifth gear.
+- Need several sightings before a light's colour counts as its own. PMR's Corvette C7.R lights 9 and
+  10 only come on at the redline, and light 9 took the limiter's purple from a single frame. Both now
+  fall back to the redline colour, and the report names them.
+
+### Redline
+
 - Keep a gear that only saw the revs fall out of the limiter from setting its own redline. Leaving the
   limiter reads lower than entering it, which made the wheel flash early in that gear. The report says
   which gears this applied to.
+- Measure the redline from crossings with the whole strip lit where there are any. A car whose own red
+  is close to its redline red could otherwise read a washed-out frame lower down as the redline, which
+  put PMR's Vantage GT4 about 130 rpm early in fifth gear.
+- Ignore a pale colour change that is just the strip blowing out into one of its own colours as the
+  last lights come on. PMR's MC12 GT1 was given a yellow redline that turned the whole wheel yellow
+  where the game changes nothing; it now exports a transparent redline at the limiter.
+
+### Tests and notes
+
 - Add RaceRoom regressions from confirmed drives: the Porsche 911 GT3 Cup (992) orange bank and the
-  DMD P21, which keeps its own colours at the limiter.
+  DMD P21, which keeps its own colours at the limiter. Project Motor Racing regressions cover the
+  Vantage GT4, AMG GT4, MC12 GT1, Corvette C7.R, R8 LMS GT4 Evo and Ford GTLM GTE.
+- `--filter <text>` runs only the tests whose name contains that text.
+- Colours a game blends along a continuous gradient still need a confirmed override on some cars:
+  where two bands meet, the light on the boundary measures between them.
 
 ## 0.2.1 - 2026-09-20
 
