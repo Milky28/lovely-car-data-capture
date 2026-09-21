@@ -628,6 +628,36 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrC7VioletLightsAreFound()
+        {
+            // Confirmed in game: lights 8, 9 and 10 come on in the same colour, and the last two only
+            // at the redline. The strip's backing glows violet at that end, which joined the lights
+            // into one run too wide to keep, so a frame showing nine lit read as seven. Their centres
+            // blow out to rgb(255,216,255), white in two channels but not the third, which left the
+            // white-centre fallback nothing to find either.
+            foreach (var sample in new[] { new { Name = "0010", Count = 8 }, new { Name = "0013", Count = 9 },
+                                           new { Name = "0014", Count = 10 } })
+            {
+                var detector = new StripDetector();
+                var frame = LoadFrame("pmr-c7-images/c7-" + sample.Name + ".png");
+                var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Equal(sample.Count, blobs.Count, "C7 image " + sample.Name + " lit lights");
+                if (sample.Name == "0014")
+                {
+                    // The limiter turns every light red, where the strip's ten are unambiguous.
+                    Check(blobs.All(b => b.Color.Hue < 25 || b.Color.Hue > 340), "C7 limiter flash is red");
+                    var calibration = new StripCalibration();
+                    calibration.Add(blobs);
+                    var layout = calibration.Build(out _);
+                    Equal(10, layout.LedNumber, "C7 physical lights");
+                    Equal(0, layout.GapCount, "C7 strip has no bank gaps");
+                    continue;
+                }
+                Check(blobs[0].Color.Hue > 100 && blobs[0].Color.Hue < 140, "C7 first light is green");
+                Check(blobs[7].Color.Hue > 240 && blobs[7].Color.Hue < 300, "C7 light 8 is violet");
+            }
+        }
+
         private static void PmrC7RedlineOnlyLightsHaveNoOwnColour()
         {
             var session = new CaptureSession("ProjectMotorRacing", "Corvette C7.R");

@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Find a light whose blown-out centre keeps its colour. PMR's Corvette C7.R sits its top lights on a
+  violet backing that joins them into one run too wide to keep, and their centres are white in two
+  channels only, so a frame with nine lights lit was read as seven.
 - Need several sightings before a light's colour counts as its own. PMR's Corvette C7.R lights 9 and
   10 only come on at the redline, and light 9 took the limiter's purple from a single frame. Both now
   fall back to the redline colour, and the report names them.

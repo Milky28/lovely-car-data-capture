@@ -335,6 +335,17 @@ namespace LovelyCarDataCapture.Screen
             return false;
         }
 
+        /// <summary>
+        /// A light's blown-out centre. Usually white in every channel, but a strongly coloured light
+        /// keeps its colour through the middle: PMR's Corvette C7.R blows its violet lights out to
+        /// rgb(255,216,255), which left lights 8 to 10 without centres to be found by.
+        /// </summary>
+        private bool IsCore(int r, int g, int b)
+        {
+            int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+            return min >= _cfg.CoreBrightness || max >= _cfg.CoreBrightness && min >= WashedCoreBrightness;
+        }
+
         /// <summary>Lights found by their white-hot centres, each coloured by the glow around it.</summary>
         private List<LitBlob> DetectCores(PixelFrame frame, int x0, int x1, int y0, int y1)
         {
@@ -346,7 +357,7 @@ namespace LovelyCarDataCapture.Screen
                 {
                     if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
-                    if (Math.Min(r, Math.Min(g, b)) >= _cfg.CoreBrightness) count++;
+                    if (IsCore(r, g, b)) count++;
                 }
                 core[x - x0] = count >= _cfg.MinCorePixels;
             }
@@ -385,7 +396,7 @@ namespace LovelyCarDataCapture.Screen
                 {
                     if (!AtLedHeight(x, y)) continue;
                     frame.GetPixel(x, y, out int r, out int g, out int b);
-                    if (Math.Min(r, Math.Min(g, b)) < _cfg.CoreBrightness) continue;
+                    if (!IsCore(r, g, b)) continue;
                     top = Math.Min(top, y);
                     bottom = Math.Max(bottom, y);
                 }
