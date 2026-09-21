@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Measure the redline from crossings with the whole strip lit where there are any. A car whose own red
+  is close to its redline red could otherwise read a washed-out frame lower down as the redline, which
+  put PMR's Vantage GT4 about 130 rpm early in fifth gear.
 - Keep a gear that only saw the revs fall out of the limiter from setting its own redline. Leaving the
   limiter reads lower than entering it, which made the wheel flash early in that gear. The report says
   which gears this applied to.

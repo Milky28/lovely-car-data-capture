@@ -64,6 +64,15 @@ namespace LovelyCarDataCapture.Screen
     }
 
     /// <summary>Where one gear's strip turned to its redline colour.</summary>
+    /// <summary>One frame-to-frame crossing into or out of the redline colour.</summary>
+    internal sealed class Crossing
+    {
+        public double Rpm;
+
+        /// <summary>How many lights were lit on the normal-colour side of the crossing.</summary>
+        public int LitBefore;
+    }
+
     internal sealed class GearRedline
     {
         public int Rpm, HighestBelow, LowestAbove;
@@ -751,14 +760,31 @@ namespace LovelyCarDataCapture.Screen
                 return true;
             }
 
-            var risingAt = new List<double>();
-            var fallingAt = new List<double>();
-            var risingByGear = new Dictionary<string, List<double>>();
-            var fallingByGear = new Dictionary<string, List<double>>();
-            void Add(Dictionary<string, List<double>> byGear, string gear, double rpm)
+            bool FullStrip(int index) => lit[index].Count(v => v) >= lights - 1;
+
+            // The redline sits at or above the last light, so the best evidence for it is a crossing
+            // with every light already lit. This car's own red and its redline red are close enough that
+            // a washed-out frame lower down reads as a colour change: PMR's Vantage GT4 collected
+            // fifth-gear crossings from 6273 rpm, and one at 6844 with the last light still dark, which
+            // put its fifth gear 130 rpm below the others. Where no crossing has the whole strip, the
+            // next best is taken, so a car that sweeps or animates into its redline keeps what it has.
+            var risingAt = new List<Crossing>();
+            var fallingAt = new List<Crossing>();
+            var risingByGear = new Dictionary<string, List<Crossing>>();
+            var fallingByGear = new Dictionary<string, List<Crossing>>();
+            void Add(Dictionary<string, List<Crossing>> byGear, string gear, Crossing crossing)
             {
-                if (!byGear.TryGetValue(gear, out var list)) byGear[gear] = list = new List<double>();
-                list.Add(rpm);
+                if (!byGear.TryGetValue(gear, out var list)) byGear[gear] = list = new List<Crossing>();
+                list.Add(crossing);
+            }
+            List<double> Best(List<Crossing> crossings)
+            {
+                foreach (int needed in new[] { lights, lights - 1 })
+                {
+                    var seen = crossings.Where(c => c.LitBefore >= needed).Select(c => c.Rpm).ToList();
+                    if (seen.Count > 0) return seen;
+                }
+                return crossings.Select(c => c.Rpm).ToList();
             }
             for (int i = 1; i < _samples.Count; i++)
             {
@@ -776,13 +802,15 @@ namespace LovelyCarDataCapture.Screen
                 double at = (_samples[i].Rpm + _samples[p].Rpm) / 2.0;
                 if (redline[i].Value && !redline[p].Value && _samples[i].Rpm > _samples[p].Rpm && Clear(p, -1))
                 {
-                    risingAt.Add(at);
-                    Add(risingByGear, _samples[i].Gear, at);
+                    var crossing = new Crossing { Rpm = at, LitBefore = lit[p].Count(v => v) };
+                    risingAt.Add(crossing);
+                    Add(risingByGear, _samples[i].Gear, crossing);
                 }
                 if (!redline[i].Value && redline[p].Value && _samples[i].Rpm < _samples[p].Rpm && Clear(i, 1))
                 {
-                    fallingAt.Add(at);
-                    Add(fallingByGear, _samples[i].Gear, at);
+                    var crossing = new Crossing { Rpm = at, LitBefore = lit[i].Count(v => v) };
+                    fallingAt.Add(crossing);
+                    Add(fallingByGear, _samples[i].Gear, crossing);
                 }
             }
 
@@ -794,7 +822,6 @@ namespace LovelyCarDataCapture.Screen
             // incomplete gear segment from becoming an onset.
             var initialDarkByGear = new Dictionary<string, Tuple<double, int, int>>();
             var seenRedline = new HashSet<string>();
-            bool FullStrip(int index) => lit[index].Count(v => v) >= lights - 1;
             for (int i = 0; i < _samples.Count; )
             {
                 string gear = _samples[i].Gear;
@@ -830,8 +857,8 @@ namespace LovelyCarDataCapture.Screen
             }
             foreach (var gear in risingByGear.Keys.Union(fallingByGear.Keys).Union(initialDarkByGear.Keys))
             {
-                double? gUp = risingByGear.TryGetValue(gear, out var r) ? Median(r) : (double?)null;
-                double? gDown = fallingByGear.TryGetValue(gear, out var f) ? Median(f) : (double?)null;
+                double? gUp = risingByGear.TryGetValue(gear, out var r) ? Median(Best(r)) : (double?)null;
+                double? gDown = fallingByGear.TryGetValue(gear, out var f) ? Median(Best(f)) : (double?)null;
                 initialDarkByGear.TryGetValue(gear, out var initialDark);
                 if (!gUp.HasValue && !gDown.HasValue && !initialDarkByGear.ContainsKey(gear)) continue;
                 double g = gUp.HasValue && gDown.HasValue ? (gUp.Value + gDown.Value) / 2 :
@@ -870,9 +897,9 @@ namespace LovelyCarDataCapture.Screen
                 return;
             }
 
-            double? up = risingAt.Count > 0 ? Median(risingAt) : initialDarkByGear.Count > 0
+            double? up = risingAt.Count > 0 ? Median(Best(risingAt)) : initialDarkByGear.Count > 0
                 ? Median(initialDarkByGear.Values.Select(v => v.Item1).ToList()) : (double?)null;
-            double? down = fallingAt.Count > 0 ? Median(fallingAt) : (double?)null;
+            double? down = fallingAt.Count > 0 ? Median(Best(fallingAt)) : (double?)null;
             double estimate = up.HasValue && down.HasValue ? (up.Value + down.Value) / 2 : (up ?? down.Value);
             result.RedlineRpm = RoundTo(estimate, 5);
             result.RedlineHighestBelow = (int)Math.Round(Math.Min(up ?? estimate, down ?? estimate));

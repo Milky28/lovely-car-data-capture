@@ -88,6 +88,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Ordinary nonuniform spacing does not invent bank gaps", OrdinarySpacingIsNotBankGap);
             Run("RRRE BMW dim red pair survives while dark frames stay dark", RrreBmwDimRedPair);
             Run("PMR Vantage GT4 fifth gear keeps the measured redline", PmrVantageGt4FifthGearRedline);
+            Run("PMR Vantage GT4 redline needs the whole strip lit", PmrVantageGt4RedlineNeedsFullStrip);
             Run("RRRE Porsche Cup keeps its orange bank apart from red", RrrePorscheCupOrangeBank);
             Run("RRRE DMD P21 keeps its own colours at the limiter", RrreDmdP21NoLimiterEffect);
             Run("Protech reflective OFF housings preserve its real redline blink", ProtechReflectiveOffPhase);

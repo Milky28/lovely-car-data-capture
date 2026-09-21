@@ -612,6 +612,22 @@ namespace LovelyCarDataCapture.Tests
             Check(others.Max() - others.Min() <= 80, "The gears that saw the revs rise agree");
         }
 
+        private static void PmrVantageGt4RedlineNeedsFullStrip()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "AMR Vantage GT4");
+            foreach (var f in LoadFrames(DataPath("pmr-amr-vantage-gt4-second.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var p = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+            // This car's own red and its redline red are close. In fifth the revs climb slowly, and
+            // washed-out frames read as colour changes from 6273 rpm, with the last light still dark.
+            // Confirmed in game: every gear flashes at about 6980.
+            foreach (var gear in p.GearOrder)
+                Check(Math.Abs(p.LedRpm[gear][0] - 6980) <= 40, "Gear " + gear + " redline stays at the limiter");
+            Check(p.LedRpm["5"][0] >= p.LedRpm["3"][0] - 40, "Fifth gear does not flash before third");
+            int lastLight = Enumerable.Range(1, p.LedNumber).Max(i => p.LedRpm["5"][i]);
+            Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
+        }
+
         private static void RrrePorscheCupOrangeBank()
         {
             var session = new CaptureSession("RRRE", "12163,Porsche 911 GT3 Cup (992)");
