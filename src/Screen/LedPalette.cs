@@ -313,13 +313,18 @@ namespace LovelyCarDataCapture.Screen
             return d > 180 ? 360 - d : d;
         }
 
-        /// <summary>True when two groups sit so close that the split between them is doubtful.</summary>
+        /// <summary>
+        /// True when two groups sit so close that the split between them is doubtful. Groups given the
+        /// same name aren't: the file comes out the same whichever way they split. PMR's Corvette C7.R
+        /// has three red groups, from a light where green meets red and two shades of red, and was
+        /// flagged though every light was named as confirmed in game.
+        /// </summary>
         public static bool Doubtful(List<ColorGroup> groups)
         {
             for (int i = 1; i < groups.Count; i++)
             {
-                if (groups[i].Hex == groups[i - 1].Hex) return true;
-                if (groups[i].Hue - groups[i - 1].Hue < 10) return true;
+                if (groups[i].Hex == groups[i - 1].Hex) continue;
+                if (Distance(groups[i].Hue, groups[i - 1].Hue) < 10) return true;   // the strip's red can sit across 360
             }
             return false;
         }

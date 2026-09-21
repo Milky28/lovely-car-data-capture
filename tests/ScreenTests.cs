@@ -725,10 +725,13 @@ namespace LovelyCarDataCapture.Tests
                 var session = new CaptureSession("ProjectMotorRacing", car.Item2);
                 foreach (var f in LoadFrames(DataPath(car.Item1)))
                     session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
-                var p = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+                var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+                var p = result.Profile;
                 Equal(car.Item3.Length, p.LedNumber, car.Item2 + " layout");
                 for (int i = 0; i < car.Item3.Length; i++)
                     Equal(hex[car.Item3[i]], p.LedColor[i + 1], car.Item2 + " light " + (i + 1));
+                // Several groups of one colour, like the C7's three reds, aren't colours in doubt.
+                Check(!result.Report.Any(line => line.Contains("too close to tell apart")), car.Item2 + " has no doubtful colours");
             }
         }
 
