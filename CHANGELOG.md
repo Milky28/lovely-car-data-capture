@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Need several sightings before a light's colour counts as its own. PMR's Corvette C7.R lights 9 and
+  10 only come on at the redline, and light 9 took the limiter's purple from a single frame. Both now
+  fall back to the redline colour, and the report names them.
 - Ignore a pale colour change that is just the strip blowing out into one of its own colours as the
   last lights come on. PMR's MC12 GT1 was given a yellow redline that turned the whole wheel yellow
   where the game changes nothing; it now exports a transparent redline at the limiter.

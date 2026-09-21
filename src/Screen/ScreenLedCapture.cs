@@ -1021,15 +1021,19 @@ namespace LovelyCarDataCapture.Screen
             result.ColorUnknown = new bool[layout.LedNumber];
             for (int s = 0; s < layout.LedNumber; s++)
             {
-                result.MeasuredColors[s] = counts[s] == 0
+                // A couple of frames are a stray sighting, not a colour: PMR's Corvette C7.R lights 9
+                // and 10 only at the redline, and light 9 was given the limiter's purple on the
+                // strength of one neutral frame, while light 10 was correctly left unknown.
+                bool seen = counts[s] >= MinColorFrames;
+                result.MeasuredColors[s] = !seen
                     ? new LedColor(0, 0, 0)
                     : new LedColor((int)(sums[s, 0] / counts[s]), (int)(sums[s, 1] / counts[s]), (int)(sums[s, 2] / counts[s]));
-                result.ColorUnknown[s] = counts[s] == 0 && !layout.IsGap[s] && lit.Any(f => f[s]);
+                result.ColorUnknown[s] = !seen && !layout.IsGap[s] && lit.Any(f => f[s]);
             }
             var unknown = Enumerable.Range(0, layout.LedNumber).Where(s => result.ColorUnknown[s]).ToList();
             if (unknown.Count > 0)
                 result.Notes.Add("LED " + string.Join(", ", unknown.Select(s => s + 1)) +
-                                 " only ever lit at or above the redline, where the whole strip has already changed colour, " +
+                                 " were never seen in their own colour below the redline, where the whole strip has already changed colour, " +
                                  "so their own colour couldn't be seen.");
 
             result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap);
@@ -1426,6 +1430,12 @@ namespace LovelyCarDataCapture.Screen
 
         /// <summary>How close to the highest revs a frame has to be to count as at the limiter.</summary>
         private const int SteadyBandRpm = 150;
+
+        /// <summary>
+        /// Frames a light has to be seen coloured in before that colour counts as its own. At 60 fps
+        /// this is a sixth of a second. Every car in the regression set gives its lights at least 17.
+        /// </summary>
+        private const int MinColorFrames = 10;
 
         /// <summary>Frames at the limiter with the strip steady before it counts as having no redline effect.</summary>
         private const int SteadyFrames = 60;

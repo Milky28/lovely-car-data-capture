@@ -628,6 +628,25 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrC7RedlineOnlyLightsHaveNoOwnColour()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "Corvette C7.R");
+            foreach (var f in LoadFrames(DataPath("pmr-corvette-c7-r.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            // Confirmed in game: lights 9 and 10 only come on at the redline, so neither has a colour
+            // of its own to read. Light 9 was seen coloured in a single neutral frame, in the limiter's
+            // purple, and took it; light 10 was never seen at all and correctly fell back.
+            Equal(p.LedColor[0], p.LedColor[9], "C7 light 9 falls back to the redline colour");
+            Equal(p.LedColor[0], p.LedColor[10], "C7 light 10 falls back to the redline colour");
+            Check(result.Report.Any(line => line.Contains("LED 9, 10 were never seen in their own colour")),
+                  "The report names both lights as unseen");
+            // The lights below them are measured over thousands of frames and keep what they showed.
+            foreach (int i in new[] { 1, 2, 3, 4 }) Equal("#FF00FF00", p.LedColor[i], "C7 green slot " + i);
+            foreach (int i in new[] { 5, 6, 7 }) Equal("#FFFF0000", p.LedColor[i], "C7 red slot " + i);
+        }
+
         private static void PmrMc12WashedStripIsNotARedline()
         {
             var session = new CaptureSession("ProjectMotorRacing", "MC12 GT1");
