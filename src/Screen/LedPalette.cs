@@ -55,6 +55,12 @@ namespace LovelyCarDataCapture.Screen
         /// </summary>
         public const double NeighbourDegrees = 4.5;
 
+        /// <summary>
+        /// How far a group's hue may sit from the ladder colour it was named, before that name counts
+        /// as forced by the need to keep colours apart rather than measured.
+        /// </summary>
+        private const double NamedHueDegrees = 12.0;
+
         /// <summary>A colour used by one or more lights on the strip.</summary>
         internal sealed class ColorGroup
         {
@@ -205,6 +211,10 @@ namespace LovelyCarDataCapture.Screen
                 groups[i].Hex = bestLadder[bestPicks[i]].Hex;
                 // PMR renders same-colour LEDs as separate shades. The distinct-colour ladder then
                 // calls green yellow, red orange, and blue cyan despite a clear dominant channel.
+                // Only step in when the name the ladder had to give is nowhere near the measured hue:
+                // a real orange (RaceRoom's Porsche Cup, hue 31) has a dominant red channel too, and
+                // was being called red.
+                if (Distance(groups[i].Hue, bestLadder[bestPicks[i]].Hue) <= NamedHueDegrees) continue;
                 var measured = groups[i].Measured;
                 if (measured.G > measured.R * PrimaryChannelDominance && measured.G > measured.B * PrimaryChannelDominance)
                 {

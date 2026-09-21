@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
+  and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Add RaceRoom regressions from confirmed drives: the Porsche 911 GT3 Cup (992) orange bank and the
+  DMD P21, which keeps its own colours at the limiter.
+
 ## 0.2.1 - 2026-09-20
 
 ### Capture accuracy

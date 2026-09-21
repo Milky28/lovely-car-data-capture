@@ -595,6 +595,53 @@ namespace LovelyCarDataCapture.Tests
             }
         }
 
+        private static void RrrePorscheCupOrangeBank()
+        {
+            var session = new CaptureSession("RRRE", "12163,Porsche 911 GT3 Cup (992)");
+            foreach (var f in LoadFrames(DataPath("rrre-porsche-911-gt3-cup-992.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var p = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+            Equal(16, p.LedNumber, "Porsche Cup mirrored strip");
+            // The middle bank really is orange. Its red channel dominates, like PMR's red shades, so
+            // it used to be named red and needed a confirmed override to read correctly on the wheel.
+            foreach (int i in new[] { 4, 5, 6, 11, 12, 13 }) Equal("#FFFF8000", p.LedColor[i], "Porsche Cup orange bank slot " + i);
+            foreach (int i in new[] { 7, 8, 9, 10 }) Equal("#FFFF0000", p.LedColor[i], "Porsche Cup red centre slot " + i);
+            foreach (int i in new[] { 1, 2, 3, 14, 15, 16 }) Equal("#FF00FF00", p.LedColor[i], "Porsche Cup green ends slot " + i);
+            Equal("#00000000", p.LedColor[0], "Porsche Cup keeps its own colours at the limiter");
+            Check(Math.Abs(p.RedlineBlinkInterval - 51) <= 5, "Porsche Cup measured blink");
+
+            // Confirmed in game: the strip is mirrored, so each pair lights together.
+            var row = p.LedRpm["3"];
+            Check(Math.Abs(row[0] - 8810) <= 20, "Porsche Cup redline at the limiter");
+            for (int i = 1; i <= 8; i++) Equal(row[i], row[17 - i], "Porsche Cup pair " + i + " lights together");
+            foreach (var expected in new[] { new[] { 1, 7400 }, new[] { 4, 7885 }, new[] { 8, 8550 } })
+                Check(Math.Abs(row[expected[0]] - expected[1]) <= 20, "Porsche Cup LED " + expected[0] + " threshold");
+        }
+
+        private static void RrreDmdP21NoLimiterEffect()
+        {
+            var session = new CaptureSession("RRRE", "1759,DMD P21");
+            foreach (var f in LoadFrames(DataPath("rrre-dmd-p21.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            Equal(15, p.LedNumber, "DMD P21 lights");
+            foreach (int i in new[] { 1, 2, 3, 4, 5 }) Equal("#FF00FF00", p.LedColor[i], "DMD P21 green start slot " + i);
+            foreach (int i in new[] { 6, 7, 8, 9, 10 }) Equal("#FFFF0000", p.LedColor[i], "DMD P21 red middle slot " + i);
+            foreach (int i in new[] { 11, 12, 13, 14, 15 }) Equal("#FF0000FF", p.LedColor[i], "DMD P21 blue end slot " + i);
+            // This car keeps its strip lit in its own colours at the limiter, so ATSR must not flash.
+            Equal("#00000000", p.LedColor[0], "DMD P21 transparent redline");
+            Equal(0, p.RedlineBlinkInterval, "DMD P21 has no redline blink");
+            Check(result.Report.Any(line => line.Contains("no redline effect")), "DMD P21 report explains the missing effect");
+
+            // Green flickers on single lights are traction control, not the rev count.
+            Check(result.Report.Any(line => line.Contains("indicators")), "DMD P21 indicator sightings ignored");
+            var row = p.LedRpm["3"];
+            Check(Math.Abs(row[0] - 7840) <= 20, "DMD P21 redline at the limiter");
+            foreach (var expected in new[] { new[] { 1, 6485 }, new[] { 8, 6975 }, new[] { 15, 7455 } })
+                Check(Math.Abs(row[expected[0]] - expected[1]) <= 20, "DMD P21 LED " + expected[0] + " threshold");
+        }
+
         private static void RrreBmwDimRedPair()
         {
             var detector = new StripDetector();
