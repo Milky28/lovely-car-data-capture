@@ -129,6 +129,12 @@ Each light's own colour is the one it shows most while lit, leaving out moments 
 one colour (the redline, a blink, a fade). Sweeps have to start below the first light, so each light is
 seen switching on.
 
+Some games draw a strip's glow as one gradient, so a light where two colours meet takes on the colour
+of the light above it once that one is lit. PMR's MC12 light 5 is yellow, but beside its lit red
+neighbour it reads nearly red. A light next to a different colour is therefore read while the light
+above it is still dark. Lights next to their own colour are read over every frame, and neighbours that
+read alike over every frame stay one colour.
+
 **What it needs:**
 
 - **Borderless or windowed mode.** Exclusive fullscreen hands its frames straight to the display, where

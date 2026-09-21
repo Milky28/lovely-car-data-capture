@@ -45,6 +45,18 @@ tests/bin/Release/net48/LovelyCarDataCapture.Tests.exe --replay <car>.frames.csv
 That's how every fix to the screen reading was checked, and the captures in `tests/data` are replayed
 by the tests the same way.
 
+To see everything a change does, replay every capture in the export folder before and after it:
+
+```powershell
+./tools/replay-all.ps1 -Out review/replay/before
+./tools/replay-all.ps1 -Out review/replay/after -Baseline review/replay/before
+```
+
+The second run lists each car whose colours, light rpm or blink interval changed. Game and car id come
+from each capture's own export. Replays don't apply local overrides. Any change not meant by the fix is
+a regression until it's checked in game. A capture redone between the two runs shows up as a change
+too.
+
 These CSVs contain detected light positions and colours, not the original pixels. They test the
 analysis and profile composition; changes to pixel detection also need image fixtures. The PMR
 Mustang GT3 recording and its `.confirmed.json` preserve an export the owner checked in game. Its

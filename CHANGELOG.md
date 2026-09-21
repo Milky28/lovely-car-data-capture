@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Colours
+
+- Read a light where two colours meet while the light above it is still dark. Some games draw the
+  strip's glow as one gradient, so beside a lit neighbour the light took on its colour. PMR's
+  Corvette C7.R, NSX GT3 Evo 22, MC12 GT1, R8 LMS GT4 Evo, Camaro ZL-1 GT4.R and Corvette C8.R now
+  come out as they look in game, with no local overrides.
+- Stop warning that colours are too close to tell apart when they end up as the same colour, or when
+  a strip's red sits either side of pure red. The note appeared on most cars; it now appears only
+  where two different colours really are close.
+
+### Development
+
+- `tools/replay-all.ps1` replays every saved capture and lists what a change did to each car.
+
 ## 0.2.2 - 2026-09-21
 
 Screen reading fixes, every one found by checking a capture against the car in game.

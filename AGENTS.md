@@ -17,9 +17,11 @@ tests/bin/Release/net48/LovelyCarDataCapture.Tests.exe
 - References SimHub's DLLs from `C:\Program Files (x86)\SimHub\` (override with `SIMHUB_INSTALL_PATH`).
   SimHub must be installed to build.
 - The test runner is a console app (`tests/Program.cs` lists every test; `tests/ScreenTests.cs` holds
-  the screen ones). All must pass before any commit (121 at v0.2.1). There is no xUnit/NUnit.
+  the screen ones). All must pass before any commit (132 after v0.2.2). There is no xUnit/NUnit.
   `--filter <text>` runs only tests whose name contains the text, for quick iteration.
 - Replay a saved drive: `... Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json --game <game> --car <id>`.
+- Before and after any detection change, run `tools/replay-all.ps1` (see `docs/development.md`) and
+  account for every car it lists as changed.
 
 ## Installing for the user to test
 
@@ -77,10 +79,10 @@ about ±10-20 rpm; 40-60 in neutral/1st or on the last light before the redline.
 - Don't post on Discord or contact ATSR's developer.
 - Commit messages: plain summary line, no "Generated with" footer in PR bodies to the upstream repo.
 
-## Current state (2026-09-20)
+## Current state (2026-09-21)
 
-- v0.2.1 is the published release (https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.1).
-  `main` has later documentation commits; published assets were deliberately left as released.
+- v0.2.2 is the published release (https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.2).
+  `main` has unreleased fixes after it (see `CHANGELOG.md`, Unreleased), not pushed.
 - `tools/package-release.ps1` builds, tests and packages a release into `artifacts/<version>/`. It
   does not commit, tag, install or publish.
 - `review/` is untracked local material (captures, calibration trials, a nested Lovely Car Data
@@ -92,6 +94,8 @@ about ±10-20 rpm; 40-60 in neutral/1st or on the last light before the redline.
   holding further submissions (including the LMU SC63 fix: LEDs 6-8 yellow together ~7400, 9-10 red
   together ~7675) until these are approved. Don't prepare or suggest new upstream PRs until then.
 - Don't assume the DLL installed in SimHub matches the latest build.
+- When the owner confirms colours, "in game" (on screen) is what a capture must match. "On wheel" only
+  shows what the current car file says.
 - Companion tool: RPM LED Builder, `C:\Users\jerky\Documents\rpm-led-builder` (single `index.html`,
   GitHub Pages at https://milky28.github.io/rpm-led-builder/). Separate repo; confirm which project
   is meant before editing.
