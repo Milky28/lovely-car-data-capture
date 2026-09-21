@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Read a light that blows out to white through its middle as one light. Colour survives only at its
+  edges, so PMR's R8 LMS GT4 Evo was read as 19 lights instead of 10, its green named cyan, and its
+  limiter flash missed. Lights are separated by dark housing, so this cannot join two of them.
 - Measure the redline from crossings with the whole strip lit where there are any. A car whose own red
   is close to its redline red could otherwise read a washed-out frame lower down as the redline, which
   put PMR's Vantage GT4 about 130 rpm early in fifth gear.

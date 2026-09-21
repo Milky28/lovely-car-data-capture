@@ -237,10 +237,11 @@ namespace LovelyCarDataCapture.Screen
             var litColumn = new bool[x1 - x0];
             var weakColumn = new bool[x1 - x0];
             var strongColumn = new bool[x1 - x0];
+            var washedColumn = new bool[x1 - x0];
             var columnHue = new double[x1 - x0];
             for (int x = x0; x < x1; x++)
             {
-                int count = 0, saturated = 0, weak = 0, red = 0, green = 0, blue = 0;
+                int count = 0, saturated = 0, weak = 0, washed = 0, red = 0, green = 0, blue = 0;
                 for (int y = y0; y < y1; y++)
                 {
                     if (!AtLedHeight(x, y)) continue;
@@ -250,11 +251,13 @@ namespace LovelyCarDataCapture.Screen
                     { weak++; red += r; green += g; blue += b; }
                     if (max >= minBrightness && max - min >= _cfg.MinSaturation &&
                         (max - min) / (double)max >= _cfg.HaloSaturation) saturated++;
+                    if (max >= _cfg.CoreBrightness && min >= WashedCoreBrightness) washed++;
                     if (max >= minBrightness && (max - min >= _cfg.MinSaturation ||
                         max >= _cfg.CoreBrightness && min >= WashedCoreBrightness &&
                         HasColoredNeighbour(frame, x, y, x0, x1))) count++;
                 }
                 litColumn[x - x0] = count >= _cfg.MinColumnPixels;
+                washedColumn[x - x0] = washed >= _cfg.MinCorePixels;
                 weakColumn[x - x0] = weak >= _cfg.MinColumnPixels;
                 strongColumn[x - x0] = saturated >= _cfg.MinColumnPixels;
                 columnHue[x - x0] = weak == 0 ? -1 : new LedColor(red / weak, green / weak, blue / weak).Hue;
@@ -277,6 +280,17 @@ namespace LovelyCarDataCapture.Screen
                 x = end;
             }
 
+            // A light blown out to white through its middle leaves colour only at its two edges.
+            // The white belongs to that light, so the edges are one blob: PMR's R8 LMS GT4 Evo read
+            // ten green and yellow lights as nineteen. LEDs are separated by dark housing, never by
+            // white, so this cannot join two of them.
+            bool WashedBetween(int from, int to)
+            {
+                if (to - from <= 1) return false;
+                for (int x = from + 1; x < to; x++) if (!washedColumn[x - x0]) return false;
+                return true;
+            }
+
             var blobs = new List<LitBlob>();
             int start = -1;
             for (int i = 0; i <= litColumn.Length; i++)
@@ -288,10 +302,14 @@ namespace LovelyCarDataCapture.Screen
                     int left = start + x0, right = i - 1 + x0;
                     // A short valley may separate two complete LEDs whose combined glow is wider
                     // than one light. Keep them separate even in the wider cluster fallback.
-                    if (blobs.Count > 0 && left - blobs[blobs.Count - 1].Right <= _cfg.MergeGap &&
-                        (right - blobs[blobs.Count - 1].Left + 1 <= _cfg.MaxWidth ||
-                         blobs[blobs.Count - 1].Width < _cfg.MinWidth || right - left + 1 < _cfg.MinWidth))
-                        blobs[blobs.Count - 1].Right = right;
+                    var previous = blobs.Count > 0 ? blobs[blobs.Count - 1] : null;
+                    bool washedCentre = previous != null && WashedBetween(previous.Right, left) &&
+                                        right - previous.Left + 1 <= maxWidth;
+                    if (previous != null && (washedCentre ||
+                        left - previous.Right <= _cfg.MergeGap &&
+                        (right - previous.Left + 1 <= _cfg.MaxWidth ||
+                         previous.Width < _cfg.MinWidth || right - left + 1 < _cfg.MinWidth)))
+                        previous.Right = right;
                     else
                         blobs.Add(new LitBlob { Left = left, Right = right });
                     start = -1;

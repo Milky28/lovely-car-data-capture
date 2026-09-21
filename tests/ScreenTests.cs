@@ -628,6 +628,35 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrR8WashedCentresAreOneLight()
+        {
+            // Each light is blown out to white through its middle, leaving colour only at its edges,
+            // so ten lights were read as nineteen and their pale edges named cyan instead of green.
+            foreach (var sample in new[] { new { Name = "0045", Count = 0 }, new { Name = "0050", Count = 2 },
+                                           new { Name = "0053", Count = 5 }, new { Name = "0056", Count = 8 },
+                                           new { Name = "0046", Count = 10 } })
+            {
+                var detector = new StripDetector();
+                var frame = LoadFrame("pmr-r8-images/r8-" + sample.Name + ".png");
+                var blobs = detector.Detect(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+                Equal(sample.Count, blobs.Count, "R8 image " + sample.Name + " lights");
+                Check(blobs.All(b => b.Width >= 20), "R8 image " + sample.Name + " keeps whole lights, not their edges");
+                if (sample.Name == "0046")
+                {
+                    // The limiter turns the whole strip red, which is where the count is clearest.
+                    Check(blobs.All(b => b.Color.Hue < 25 || b.Color.Hue > 340), "R8 limiter flash is red");
+                    var calibration = new StripCalibration();
+                    calibration.Add(blobs);
+                    var layout = calibration.Build(out _);
+                    Equal(10, layout.LedNumber, "R8 physical lights");
+                    Equal(0, layout.GapCount, "R8 strip has no bank gaps");
+                }
+                if (sample.Name != "0053") continue;
+                Check(blobs[0].Color.Hue > 100 && blobs[0].Color.Hue < 150, "R8 first light is green, not cyan");
+                Check(blobs[4].Color.Hue > 40 && blobs[4].Color.Hue < 90, "R8 fifth light has turned towards yellow");
+            }
+        }
+
         private static void RrrePorscheCupOrangeBank()
         {
             var session = new CaptureSession("RRRE", "12163,Porsche 911 GT3 Cup (992)");
