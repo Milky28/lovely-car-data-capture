@@ -628,6 +628,25 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrMc12WashedStripIsNotARedline()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "MC12 GT1");
+            foreach (var f in LoadFrames(DataPath("pmr-mc12-gt1.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            // As the last lights came on the whole strip blew out to rgb(227,248,185), its own yellow
+            // at a quarter of a real redline's saturation. That read as every light leaving its own
+            // colour at once, and turned the wheel yellow where the game changes nothing.
+            Equal("#00000000", p.LedColor[0], "MC12 keeps its own colours at the limiter");
+            Equal(0, p.RedlineBlinkInterval, "MC12 has no redline blink");
+            Check(result.Report.Any(line => line.Contains("washed out into one of its own colours")),
+                  "The report explains the rejected colour change");
+            Check(result.Report.Any(line => line.Contains("no redline effect")), "MC12 is reported as having no redline effect");
+            foreach (int i in new[] { 1, 2, 3 }) Equal("#FF00FF00", p.LedColor[i], "MC12 green slot " + i);
+            Check(p.LedRpm["1"][0] > p.LedRpm["1"][6], "The redline sits above the last light");
+        }
+
         private static void PmrAmgGt4RedCentrePair()
         {
             var session = new CaptureSession("ProjectMotorRacing", "GT4");

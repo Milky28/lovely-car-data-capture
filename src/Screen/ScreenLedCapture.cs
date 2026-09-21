@@ -638,6 +638,13 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>Hue change that counts as a light no longer showing its own colour.</summary>
         private const double RedlineHueShift = 12.0;
 
+        /// <summary>
+        /// How far from grey the redline colour has to be to be a colour at all. Real ones are strong:
+        /// PMR's AMG GT4 measures 1.00, its Vantage GT4 0.82, ACC's Huracan 0.91. A strip merely blown
+        /// out by its own last lights measures about 0.25.
+        /// </summary>
+        private const double RedlineColorSaturation = 0.45;
+
         /// <summary>How close together every lit light's hue has to be for the strip to count as one colour.</summary>
         private const double OneColourDegrees = 8.0;
 
@@ -915,6 +922,27 @@ namespace LovelyCarDataCapture.Screen
             if (above.Count > 0)
             {
                 var mean = new LedColor((int)above.Average(c => c.R), (int)above.Average(c => c.G), (int)above.Average(c => c.B));
+                // A redline colour is a colour. Pale means the strip only washed out as the last lights
+                // came on, which reads as every light leaving its own colour at once: PMR's MC12 GT1
+                // measured rgb(227,248,185) that way and would have turned the whole wheel yellow.
+                // ...and a pale one that is simply a light's own colour is the strip blowing out, not a
+                // change to anything new. A car whose redline really does use one of its own colours
+                // shows it strongly: PMR's MC12 GT1 washed to rgb(227,248,185), its own yellow at a
+                // quarter of the saturation a real redline carries, which would have turned the whole
+                // wheel yellow where the game changes nothing.
+                bool ownColour = ownHue.Any(h => h >= 0 && HueDistance(h, mean.Hue) <= RedlineHueShift);
+                if (mean.Saturation < RedlineColorSaturation && ownColour)
+                {
+                    result.RedlineRpm = null;
+                    result.RedlineHighestBelow = null;
+                    result.RedlineLowestAbove = null;
+                    result.SecondStageRpm = null;
+                    result.SecondStageColor = null;
+                    result.RedlineByGear.Clear();
+                    result.Notes.Add("Where the last lights came on the strip washed out into one of its own colours " +
+                                     "rather than changing to a redline colour, so no redline colour change was taken from it.");
+                    return;
+                }
                 result.RedlineColor = LedPalette.Classify(mean, out _);
                 result.RedlineMeasured = mean;
             }

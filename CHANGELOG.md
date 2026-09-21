@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Ignore a pale colour change that is just the strip blowing out into one of its own colours as the
+  last lights come on. PMR's MC12 GT1 was given a yellow redline that turned the whole wheel yellow
+  where the game changes nothing; it now exports a transparent redline at the limiter.
 - Let a strongly dominant channel name a colour whatever the hue ladder had to call it. Two shades of
   the same warm red were being named red and orange, which gave PMR's AMG GT4 an orange centre pair.
   A game's orange keeps far more green than a warm red, so it is still read as orange.
