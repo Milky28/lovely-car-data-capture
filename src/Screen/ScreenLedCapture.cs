@@ -1048,7 +1048,25 @@ namespace LovelyCarDataCapture.Screen
             var layout = result.Layout;
             var sums = new long[layout.LedNumber, 3];
             var counts = new int[layout.LedNumber];
+            var cleanSums = new long[layout.LedNumber, 3];
+            var cleanCounts = new int[layout.LedNumber];
             double ceiling = result.RedlineHighestBelow ?? result.RedlineRpm ?? double.MaxValue;
+
+            // Which neighbour lights after each slot: the one lit in fewer frames.
+            var litFrames = new int[layout.LedNumber];
+            foreach (var f in lit) for (int s = 0; s < layout.LedNumber; s++) if (f[s]) litFrames[s]++;
+            int Neighbour(int s, int step)
+            {
+                for (int n = s + step; n >= 0 && n < layout.LedNumber; n += step)
+                    if (!layout.IsGap[n]) return n;
+                return -1;
+            }
+            bool LaterNeighbourLit(bool[] f, int s)
+            {
+                foreach (int n in new[] { Neighbour(s, -1), Neighbour(s, 1) })
+                    if (n >= 0 && f[n] && litFrames[n] < litFrames[s]) return true;
+                return false;
+            }
 
             for (int i = 0; i < _samples.Count; i++)
             {
@@ -1061,7 +1079,35 @@ namespace LovelyCarDataCapture.Screen
                     if (c.Hue < 0) continue;
                     sums[slot, 0] += c.R; sums[slot, 1] += c.G; sums[slot, 2] += c.B;
                     counts[slot]++;
+                    if (i < lit.Length && !LaterNeighbourLit(lit[i], slot))
+                    {
+                        cleanSums[slot, 0] += c.R; cleanSums[slot, 1] += c.G; cleanSums[slot, 2] += c.B;
+                        cleanCounts[slot]++;
+                    }
                 }
+            }
+            var raw = new LedColor[layout.LedNumber];
+            for (int s = 0; s < layout.LedNumber; s++)
+            {
+                raw[s] = counts[s] < MinColorFrames ? new LedColor(0, 0, 0)
+                    : new LedColor((int)(sums[s, 0] / counts[s]), (int)(sums[s, 1] / counts[s]), (int)(sums[s, 2] / counts[s]));
+            }
+            // Some games draw a strip's glow as one gradient, so a light where two colours meet takes on
+            // the colour of the light above it once that one is lit. Read it while the light above is
+            // still dark: PMR's MC12 light 5 reads 24 over every frame, where red is lit beside it, and
+            // 51, its own yellow, without it. Only lights beside a different colour are read that way;
+            // a light beside its own colour has nothing to lose, and AC's Bayer shifted just enough
+            // from it to change its name.
+            for (int s = 0; s < layout.LedNumber; s++)
+            {
+                if (cleanCounts[s] < MinColorFrames || raw[s].Hue < 0) continue;
+                bool boundary = false;
+                foreach (int n in new[] { Neighbour(s, -1), Neighbour(s, 1) })
+                    if (n >= 0 && litFrames[n] < litFrames[s] && raw[n].Hue >= 0 &&
+                        HueDistance(raw[n].Hue, raw[s].Hue) > LedPalette.SameColorDegrees) boundary = true;
+                if (!boundary) continue;
+                counts[s] = cleanCounts[s];
+                for (int k = 0; k < 3; k++) sums[s, k] = cleanSums[s, k];
             }
 
             result.MeasuredColors = new LedColor[layout.LedNumber];
@@ -1083,7 +1129,7 @@ namespace LovelyCarDataCapture.Screen
                                  " were never seen in their own colour below the redline, where the whole strip has already changed colour, " +
                                  "so their own colour couldn't be seen.");
 
-            result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap);
+            result.ColorGroups = LedPalette.Group(result.MeasuredColors, layout.IsGap, raw);
             result.ColorsDoubtful = LedPalette.Doubtful(result.ColorGroups);
 
             // The flash is usually one of the strip's own colours. Naming it against them rather than

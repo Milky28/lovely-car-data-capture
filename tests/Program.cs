@@ -92,6 +92,7 @@ namespace LovelyCarDataCapture.Tests
             Run("PMR GTLM drifted lights keep their threshold", PmrGtlmDriftedLightsKeepTheirThreshold);
             Run("PMR C7 violet lights are found separately", PmrC7VioletLightsAreFound);
             Run("PMR C7 redline-only lights have no colour of their own", PmrC7RedlineOnlyLightsHaveNoOwnColour);
+            Run("PMR boundary lights take their band's colour", PmrBoundaryLightsTakeTheirBandsColour);
             Run("PMR MC12 washed strip is not a redline colour", PmrMc12WashedStripIsNotARedline);
             Run("PMR AMG GT4 keeps a red centre pair", PmrAmgGt4RedCentrePair);
             Run("PMR R8 washed-out centres stay one light", PmrR8WashedCentresAreOneLight);

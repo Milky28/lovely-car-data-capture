@@ -112,7 +112,7 @@ namespace LovelyCarDataCapture.Screen
         }
 
         /// <summary>Groups the measured colours by hue and names them.</summary>
-        public static List<ColorGroup> Group(IList<LedColor> perSlot, IList<bool> isGap)
+        public static List<ColorGroup> Group(IList<LedColor> perSlot, IList<bool> isGap, IList<LedColor> rawPerSlot = null)
         {
             var lights = new List<Tuple<int, double>>();
             for (int i = 0; i < perSlot.Count; i++)
@@ -143,6 +143,26 @@ namespace LovelyCarDataCapture.Screen
             {
                 groups[0].Slots.AddRange(groups[groups.Count - 1].Slots);
                 groups.RemoveAt(groups.Count - 1);
+            }
+            // Neighbours that read alike over every frame stay together, whatever their clean readings
+            // say. The first light is only ever clean when it's alone on the strip, without the bloom
+            // of the rest: PMR's AMR Vantage GT4 lights 1 and 2 both read 93 over every frame, but
+            // 109 and 94 when clean, and were split into green and yellow.
+            if (rawPerSlot != null)
+            {
+                var order = lights.Select(l => l.Item1).OrderBy(s => s).ToList();
+                for (int k = 1; k < order.Count; k++)
+                {
+                    int a = order[k - 1], b = order[k];
+                    if (Enumerable.Range(a + 1, b - a - 1).Any(s => isGap == null || s >= isGap.Count || !isGap[s])) continue;
+                    if (rawPerSlot[a].Hue < 0 || rawPerSlot[b].Hue < 0 ||
+                        Distance(rawPerSlot[a].Hue, rawPerSlot[b].Hue) > SameColorDegrees) continue;
+                    var ga = groups.First(g => g.Slots.Contains(a));
+                    var gb = groups.First(g => g.Slots.Contains(b));
+                    if (ga == gb) continue;
+                    ga.Slots.AddRange(gb.Slots);
+                    groups.Remove(gb);
+                }
             }
             foreach (var g in groups)
             {

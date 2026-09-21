@@ -696,8 +696,40 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Report.Any(line => line.Contains("LED 9, 10 were never seen in their own colour")),
                   "The report names both lights as unseen");
             // The lights below them are measured over thousands of frames and keep what they showed.
+            // Light 5 sits where green meets red and isn't checked here: this drive predates the
+            // violet-core fix, so lights 9 and 10 never read, and the strip's colours are checked on the
+            // later drive in PmrBoundaryLightsTakeTheirBandsColour.
             foreach (int i in new[] { 1, 2, 3, 4 }) Equal("#FF00FF00", p.LedColor[i], "C7 green slot " + i);
-            foreach (int i in new[] { 5, 6, 7 }) Equal("#FFFF0000", p.LedColor[i], "C7 red slot " + i);
+            foreach (int i in new[] { 6, 7 }) Equal("#FFFF0000", p.LedColor[i], "C7 red slot " + i);
+        }
+
+        private static void PmrBoundaryLightsTakeTheirBandsColour()
+        {
+            // PMR draws these strips' glow as one gradient, so a light where two colours meet reads a
+            // blend of them unless the light above it is dark. Confirmed in game (G green, Y yellow,
+            // R red, B blue, - gap).
+            var cars = new[]
+            {
+                Tuple.Create("pmr-corvette-c7-r-violet-core.csv", "Corvette C7.R", "GGGGRRRBBB"),
+                Tuple.Create("pmr-nsx-gt3-evo-22.csv", "NSX GT3 Evo 22", "GGGGYYYYRR"),
+                Tuple.Create("pmr-r8-lms-gt4-evo.csv", "R8 LMS GT4 Evo", "GGGYYYYRRR"),
+                Tuple.Create("pmr-camaro-zl-1-gt4-r.csv", "Camaro ZL-1 GT4.R", "GGYYRRYYGG"),
+                Tuple.Create("pmr-corvette-c8-r.csv", "Corvette C8.R", "GG-GGYYYR-RR"),
+            };
+            var hex = new Dictionary<char, string>
+            {
+                { 'G', "#FF00FF00" }, { 'Y', "#FFFFFF00" }, { 'R', "#FFFF0000" }, { 'B', "#FF0000FF" }, { '-', "#00000000" },
+            };
+            foreach (var car in cars)
+            {
+                var session = new CaptureSession("ProjectMotorRacing", car.Item2);
+                foreach (var f in LoadFrames(DataPath(car.Item1)))
+                    session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+                var p = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+                Equal(car.Item3.Length, p.LedNumber, car.Item2 + " layout");
+                for (int i = 0; i < car.Item3.Length; i++)
+                    Equal(hex[car.Item3[i]], p.LedColor[i + 1], car.Item2 + " light " + (i + 1));
+            }
         }
 
         private static void PmrMc12WashedStripIsNotARedline()
@@ -716,6 +748,9 @@ namespace LovelyCarDataCapture.Tests
                   "The report explains the rejected colour change");
             Check(result.Report.Any(line => line.Contains("no redline effect")), "MC12 is reported as having no redline effect");
             foreach (int i in new[] { 1, 2, 3 }) Equal("#FF00FF00", p.LedColor[i], "MC12 green slot " + i);
+            // Light 5 is lit alongside the red light 6 and reads a blend of the two; confirmed yellow in game.
+            foreach (int i in new[] { 4, 5 }) Equal("#FFFFFF00", p.LedColor[i], "MC12 yellow slot " + i);
+            Equal("#FFFF0000", p.LedColor[6], "MC12 red slot 6");
             Check(p.LedRpm["1"][0] > p.LedRpm["1"][6], "The redline sits above the last light");
         }
 
