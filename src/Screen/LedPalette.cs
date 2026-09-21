@@ -24,6 +24,14 @@ namespace LovelyCarDataCapture.Screen
         /// <summary>PMR's repeated green, red and blue lights keep their colour when one channel is clearly dominant.</summary>
         private const double PrimaryChannelDominance = 1.6;
 
+        /// <summary>
+        /// Dominance that settles the question on its own, whatever the hue ladder had to call the
+        /// colour. A game's orange keeps a strong second channel - RaceRoom's Porsche Cup measures
+        /// rgb(229,130,20), green at 0.57 of red - while a warm red does not: PMR's AMG GT4 centre
+        /// pair measures rgb(189,53,0) and rgb(182,65,0), green at 0.28 and 0.36 of red.
+        /// </summary>
+        private const double StrongChannelDominance = 2.2;
+
         /// <summary>PMR's paired yellow lights can differ in hue while red and green remain this close.</summary>
         private const double YellowChannelBalance = 0.08;
 
@@ -214,8 +222,9 @@ namespace LovelyCarDataCapture.Screen
                 // Only step in when the name the ladder had to give is nowhere near the measured hue:
                 // a real orange (RaceRoom's Porsche Cup, hue 31) has a dominant red channel too, and
                 // was being called red.
-                if (Distance(groups[i].Hue, bestLadder[bestPicks[i]].Hue) <= NamedHueDegrees) continue;
                 var measured = groups[i].Measured;
+                if (Distance(groups[i].Hue, bestLadder[bestPicks[i]].Hue) <= NamedHueDegrees &&
+                    !StronglyDominant(measured)) continue;
                 if (measured.G > measured.R * PrimaryChannelDominance && measured.G > measured.B * PrimaryChannelDominance)
                 {
                     groups[i].Name = "green";
@@ -270,6 +279,12 @@ namespace LovelyCarDataCapture.Screen
             }
             return best[0, 0];
         }
+
+        /// <summary>True when one primary channel is far enough ahead to name the colour by itself.</summary>
+        private static bool StronglyDominant(LedColor c) =>
+            c.R > c.G * StrongChannelDominance && c.R > c.B * StrongChannelDominance ||
+            c.G > c.R * StrongChannelDominance && c.G > c.B * StrongChannelDominance ||
+            c.B > c.R * StrongChannelDominance && c.B > c.G * StrongChannelDominance;
 
         /// <summary>Distance between two hues the short way round the circle.</summary>
         private static double Distance(double a, double b)

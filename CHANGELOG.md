@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Let a strongly dominant channel name a colour whatever the hue ladder had to call it. Two shades of
+  the same warm red were being named red and orange, which gave PMR's AMG GT4 an orange centre pair.
+  A game's orange keeps far more green than a warm red, so it is still read as orange.
 - Read a light that blows out to white through its middle as one light. Colour survives only at its
   edges, so PMR's R8 LMS GT4 Evo was read as 19 lights instead of 10, its green named cyan, and its
   limiter flash missed. Lights are separated by dark housing, so this cannot join two of them.

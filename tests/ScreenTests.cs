@@ -628,6 +628,21 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrAmgGt4RedCentrePair()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "GT4");
+            foreach (var f in LoadFrames(DataPath("pmr-amg-gt4.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var p = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now).Profile;
+            // The centre pair measures rgb(189,53,0) and rgb(182,65,0): two shades of the same red,
+            // far enough apart in hue to be told apart and then named red and orange. Confirmed in
+            // game as both red. A real orange keeps far more green than this.
+            foreach (int i in new[] { 6, 7 }) Equal("#FFFF0000", p.LedColor[i], "AMG GT4 centre slot " + i);
+            foreach (int i in new[] { 4, 5, 8, 9 }) Equal("#FFFFFF00", p.LedColor[i], "AMG GT4 yellow slot " + i);
+            foreach (int i in new[] { 1, 2, 11, 12 }) Equal("#FF00FF00", p.LedColor[i], "AMG GT4 green slot " + i);
+            Equal(12, p.LedNumber, "AMG GT4 mirrored strip");
+        }
+
         private static void PmrR8WashedCentresAreOneLight()
         {
             // Each light is blown out to white through its middle, leaving colour only at its edges,
