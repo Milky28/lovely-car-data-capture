@@ -628,6 +628,29 @@ namespace LovelyCarDataCapture.Tests
             Check(p.LedRpm["5"][0] > lastLight, "The redline stays above the last light");
         }
 
+        private static void PmrGtlmDriftedLightsKeepTheirThreshold()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "GTLM GTE");
+            foreach (var f in LoadFrames(DataPath("pmr-gtlm-gte.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            // Lights 2 and 7 read greener on their own than with the yellow pair beside them lit. That
+            // drift is wider than an indicator's tolerance, so every sighting from 6214 to 6661 rpm was
+            // thrown away and both exported as 0, which lights them from idle on the wheel.
+            foreach (var gear in p.GearOrder)
+            {
+                Check(p.LedRpm[gear][2] > 0, "Gear " + gear + " light 2 has a switch-on value");
+                Check(p.LedRpm[gear][7] > 0, "Gear " + gear + " light 7 has a switch-on value");
+            }
+            Check(Math.Abs(p.LedRpm["1"][2] - 6210) <= 40, "Light 2 comes on where it was seen to");
+            Equal(p.LedRpm["1"][2], p.LedRpm["1"][7], "The mirrored pair lights together");
+            Check(p.LedRpm["1"][1] < p.LedRpm["1"][2] && p.LedRpm["1"][2] < p.LedRpm["1"][3],
+                  "Light 2 sits between its neighbours");
+            Check(result.Report.Any(line => line.Contains("stayed lit while their colour drifted")),
+                  "The report explains where those sightings came from");
+        }
+
         private static void PmrC7VioletLightsAreFound()
         {
             // Confirmed in game: lights 8, 9 and 10 come on in the same colour, and the last two only

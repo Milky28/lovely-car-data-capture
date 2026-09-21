@@ -275,9 +275,18 @@ namespace LovelyCarDataCapture.Screen
                 : double.MaxValue;
             // A gear with a redline of its own is cut off at that instead.
             double Ceiling(string gear) => result.RedlineByGear.TryGetValue(gear, out var own) ? own.LowestAbove + RedlineMarginRpm : overall;
+            // An indicator blinks and goes out again; a light whose colour merely drifted stays on. Where
+            // a slot's dropped sightings run unbroken into it being seen lit normally, they were that
+            // light coming on, and only the thresholds use them back: PMR's Ford GTLM GTE reads its
+            // second light greener alone than with the yellow one beside it lit, lost every sighting
+            // between 6214 and 6661 rpm to that drift, and exported it as 0 - on from idle on the wheel.
+            var windowLit = lit.Select(f => (bool[])f.Clone()).ToArray();
+            var windowUnknown = _indicatorSlots.Select(f => (bool[])f.Clone()).ToArray();
+            RestoreDriftedLights(lit, windowLit, windowUnknown, layout, result);
+
             var window = new LedWindowCapture(layout.LedNumber);
             for (int i = 0; i < _samples.Count; i++)
-                if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, lit[i], _indicatorSlots[i]);
+                if (!blink[i] && _samples[i].Rpm <= Ceiling(_samples[i].Gear)) window.Record(_samples[i].Gear, _samples[i].Rpm, windowLit[i], windowUnknown[i]);
             result.Gears = window.Gears.Select(window.Result).ToList();
             AverageWithSwitchOff(lit, blink, Ceiling, result);
             FindObservedOnUpperBounds(blink, Ceiling, result);
@@ -292,6 +301,44 @@ namespace LovelyCarDataCapture.Screen
                 result.Notes.Add("The strip has " + layout.GapCount + " gap(s) where the spacing leaves room but nothing ever lights.");
             return result;
         }
+
+        /// <summary>
+        /// Gives back sightings dropped as indicators where they run straight into the light being seen
+        /// lit in its own colour, which makes them that light switching on rather than something else
+        /// borrowing the slot. Only the switch-on windows see this: colours, blinks and the redline
+        /// keep treating those frames as unknown, because the colour they showed is still not the
+        /// light's own.
+        /// </summary>
+        private void RestoreDriftedLights(bool[][] lit, bool[][] windowLit, bool[][] windowUnknown, StripLayout layout, ScreenLedResult result)
+        {
+            var restored = new List<int>();
+            for (int slot = 0; slot < layout.LedNumber; slot++)
+            {
+                if (layout.IsGap[slot]) continue;
+                int run = -1;
+                bool any = false;
+                for (int i = 0; i < _samples.Count; i++)
+                {
+                    bool flagged = _indicatorSlots[i][slot];
+                    bool sameGear = run >= 0 && _samples[i].Gear == _samples[run].Gear;
+                    if (flagged && (run < 0 || sameGear)) { if (run < 0) run = i; continue; }
+                    // The run ends: keep it only where the light is lit in its own colour right after.
+                    if (run >= 0 && sameGear && !flagged && lit[i][slot] && i - run >= SustainedSightingFrames)
+                    {
+                        for (int j = run; j < i; j++) { windowLit[j][slot] = true; windowUnknown[j][slot] = false; }
+                        any = true;
+                    }
+                    run = flagged ? i : -1;
+                }
+                if (any) restored.Add(slot + 1);
+            }
+            if (restored.Count > 0)
+                result.Notes.Add("LED " + string.Join(", ", restored) + " stayed lit while their colour drifted, so those " +
+                                 "sightings were used for their switch-on rather than ignored as an indicator.");
+        }
+
+        /// <summary>Frames a drifted light has to stay lit for before its sightings are given back.</summary>
+        private const int SustainedSightingFrames = 10;
 
         /// <summary>How far from its usual colour a light has to be to count as showing something else.</summary>
         private const double IndicatorDegrees = 30;

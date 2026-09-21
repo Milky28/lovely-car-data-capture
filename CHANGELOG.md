@@ -4,6 +4,10 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Give back sightings dropped as an indicator where the light stayed lit through the drift. A light
+  reads greener alone than with a yellow neighbour lit, and PMR's Ford GTLM GTE lost every sighting of
+  lights 2 and 7 over 450 rpm that way, exporting them as 0, which lights them from idle on the wheel.
+  Only the switch-on windows use those frames back; colours and the redline still ignore them.
 - Find a light whose blown-out centre keeps its colour. PMR's Corvette C7.R sits its top lights on a
   violet backing that joins them into one run too wide to keep, and their centres are white in two
   channels only, so a frame with nine lights lit was read as seven.

@@ -89,6 +89,7 @@ namespace LovelyCarDataCapture.Tests
             Run("RRRE BMW dim red pair survives while dark frames stay dark", RrreBmwDimRedPair);
             Run("PMR Vantage GT4 fifth gear keeps the measured redline", PmrVantageGt4FifthGearRedline);
             Run("PMR Vantage GT4 redline needs the whole strip lit", PmrVantageGt4RedlineNeedsFullStrip);
+            Run("PMR GTLM drifted lights keep their threshold", PmrGtlmDriftedLightsKeepTheirThreshold);
             Run("PMR C7 violet lights are found separately", PmrC7VioletLightsAreFound);
             Run("PMR C7 redline-only lights have no colour of their own", PmrC7RedlineOnlyLightsHaveNoOwnColour);
             Run("PMR MC12 washed strip is not a redline colour", PmrMc12WashedStripIsNotARedline);
