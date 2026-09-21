@@ -67,6 +67,9 @@ namespace LovelyCarDataCapture.Screen
     internal sealed class GearRedline
     {
         public int Rpm, HighestBelow, LowestAbove;
+
+        /// <summary>True when the revs were seen rising into the redline in this gear.</summary>
+        public bool OnsetSeen;
     }
 
     /// <summary>
@@ -850,6 +853,10 @@ namespace LovelyCarDataCapture.Screen
                     Rpm = RoundTo(g, 5),
                     HighestBelow = highestBelow,
                     LowestAbove = lowestAbove,
+                    // Where the flash starts on the way up. A gear that only ever left the limiter
+                    // measures where the strip lets go, which sits lower (PMR's Vantage GT4 read its
+                    // fifth gear 100 rpm below the others that way).
+                    OnsetSeen = gUp.HasValue || initialDark != null,
                 };
             }
             FindFlash(redline, result);

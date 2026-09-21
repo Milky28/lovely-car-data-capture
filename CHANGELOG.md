@@ -4,6 +4,9 @@
 
 - Read a genuine orange LED bank as orange instead of red. The correction that keeps PMR's red, green
   and blue shades from being renamed now only applies when the name is far from the measured hue.
+- Keep a gear that only saw the revs fall out of the limiter from setting its own redline. Leaving the
+  limiter reads lower than entering it, which made the wheel flash early in that gear. The report says
+  which gears this applied to.
 - Add RaceRoom regressions from confirmed drives: the Porsche 911 GT3 Cup (992) orange bank and the
   DMD P21, which keeps its own colours at the limiter.
 

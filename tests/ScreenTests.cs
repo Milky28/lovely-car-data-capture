@@ -595,6 +595,23 @@ namespace LovelyCarDataCapture.Tests
             }
         }
 
+        private static void PmrVantageGt4FifthGearRedline()
+        {
+            var session = new CaptureSession("ProjectMotorRacing", "AMR Vantage GT4");
+            foreach (var f in LoadFrames(DataPath("pmr-amr-vantage-gt4.csv")))
+                session.Screen.Record(f.Gear, f.Rpm, f.TimeMs, f.Blobs);
+            var result = ProfileComposer.Compose(session, new CaptureSettings(), null, DateTime.Now);
+            var p = result.Profile;
+            // Fifth gear only ever left the limiter in this drive. Taken on its own that reads about
+            // 100 rpm low, and the wheel started flashing before the game did.
+            var others = new[] { "1", "2", "3", "4" }.Select(g => p.LedRpm[g][0]).ToList();
+            Check(p.LedRpm["5"][0] >= others.Min(), "Fifth gear does not flash before the gears that saw the revs rise");
+            Check(Math.Abs(p.LedRpm["5"][0] - 6975) <= 30, "Fifth gear uses the redline the other gears measured");
+            Check(result.Report.Any(line => line.Contains("only saw the redline as the revs fell")),
+                  "The report explains where fifth gear's redline came from");
+            Check(others.Max() - others.Min() <= 80, "The gears that saw the revs rise agree");
+        }
+
         private static void RrrePorscheCupOrangeBank()
         {
             var session = new CaptureSession("RRRE", "12163,Porsche 911 GT3 Cup (992)");
@@ -1069,13 +1086,24 @@ namespace LovelyCarDataCapture.Tests
                 }
                 Check(notes.Any(n => n.Contains("pooled")), "pooling was exercised");
             }
-            sr.RedlineByGear["1"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7100 };
-            sr.RedlineByGear["2"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7600 };
+            sr.RedlineByGear["1"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7100, OnsetSeen = true };
+            sr.RedlineByGear["2"] = new LovelyCarDataCapture.Screen.GearRedline { Rpm = 7600, OnsetSeen = true };
             var perGear = baseline.Clone();
             apply.Invoke(null, new object[] { sr, new CaptureSettings(), perGear, baseline, new List<string>(), new List<string>() });
             Equal(7100, perGear.LedRpm["1"][0], "measured redline in first gear");
             Equal(7600, perGear.LedRpm["2"][0], "measured redline in second gear");
             Equal(8000, perGear.LedRpm["3"][0], "undriven gear keeps its redline");
+
+            // Leaving the limiter reads lower than entering it, so a gear that only saw the revs fall
+            // must not pull its own redline down (PMR's Vantage GT4 flashed 100 rpm early in fifth).
+            sr.RedlineByGear["1"].OnsetSeen = false;
+            sr.RedlineByGear["1"].Rpm = 7100;
+            var fallingOnly = baseline.Clone();
+            var fallingNotes = new List<string>();
+            apply.Invoke(null, new object[] { sr, new CaptureSettings(), fallingOnly, baseline, fallingNotes, new List<string>() });
+            Equal(7600, fallingOnly.LedRpm["1"][0], "falling-only gear takes the redline the other gears measured");
+            Equal(7600, fallingOnly.LedRpm["2"][0], "the gear that saw the revs rise keeps its own redline");
+            Check(fallingNotes.Any(n => n.Contains("only saw the redline as the revs fell")), "the report explains the shared redline");
         }
 
         private static void ScreenRestartWaitsForWorker()

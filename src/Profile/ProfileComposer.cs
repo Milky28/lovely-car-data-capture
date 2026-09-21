@@ -284,7 +284,8 @@ namespace LovelyCarDataCapture.Profile
                                 ? " (window " + sr.RedlineHighestBelow + "-" + sr.RedlineLowestAbove + ")" : ""));
             if (sr.RedlineByGear.Count > 1)
                 details.Add("  Redline by gear: " + string.Join(", ", sr.RedlineByGear.OrderBy(g => g.Key, StringComparer.Ordinal)
-                                .Select(g => g.Key + " " + g.Value.Rpm + " (" + g.Value.HighestBelow + "-" + g.Value.LowestAbove + ")")));
+                                .Select(g => g.Key + " " + g.Value.Rpm + " (" + g.Value.HighestBelow + "-" + g.Value.LowestAbove + ")" +
+                                             (g.Value.OnsetSeen ? "" : " revs falling only"))));
             if (sr.SecondStageRpm.HasValue)
                 details.Add("  Second stage " + sr.SecondStageMeasured + " -> " + (sr.SecondStageColor ?? "?") + " from " + sr.SecondStageRpm + " rpm (not in the file)");
             if (sr.BlinkSeen)
@@ -311,7 +312,7 @@ namespace LovelyCarDataCapture.Profile
                 }
                 int lastLit = gr.Leds.Where(Trusted).Select(l => l.Rpm).DefaultIfEmpty(0).Max();
                 // This gear's own redline where it had one: some cars move it with the gear.
-                int? redline = sr.RedlineByGear.TryGetValue(gr.Gear, out var own) ? own.Rpm : sr.RedlineRpm;
+                int? redline = sr.RedlineByGear.TryGetValue(gr.Gear, out var own) && own.OnsetSeen ? own.Rpm : sr.RedlineRpm;
                 if (redline.HasValue && redline.Value >= lastLit) row[0] = redline.Value;
                 else if (redline.HasValue)
                 {
@@ -474,14 +475,22 @@ namespace LovelyCarDataCapture.Profile
                               " rpm, so each pair was set to its earlier reading to light together on the wheel.");
                 }
                 int last = measuredLeds.Select(i => pooled[i]).DefaultIfEmpty(0).Max();
-                var redlines = sr.RedlineByGear.Values.Select(r => r.Rpm).ToList();
+                // Only gears that saw the revs rise into the redline say where it starts.
+                var redlines = sr.RedlineByGear.Values.Where(r => r.OnsetSeen).Select(r => r.Rpm).ToList();
+                if (redlines.Count == 0) redlines = sr.RedlineByGear.Values.Select(r => r.Rpm).ToList();
                 if (redlines.Count == 0 && sr.RedlineRpm.HasValue) redlines.Add(sr.RedlineRpm.Value);
                 pooled[0] = Math.Max(redlines.Count > 0 ? Median(redlines) : pooled[0], last);
 
                 // The lights can be the same in every gear while the redline isn't: the gears that had
                 // their own redline keep it, and the rest keep what they had.
-                var ownRedlines = results.Where(r => sr.RedlineByGear.ContainsKey(r.Gear))
+                var ownRedlines = results.Where(r => sr.RedlineByGear.TryGetValue(r.Gear, out var own) && own.OnsetSeen)
                                          .ToDictionary(r => r.Gear, r => p.LedRpm[r.Gear][0]);
+                var fallingOnly = results.Where(r => sr.RedlineByGear.TryGetValue(r.Gear, out var own) && !own.OnsetSeen)
+                                         .Select(r => r.Gear).ToList();
+                if (fallingOnly.Count > 0)
+                    notes.Add("Gear " + string.Join(", ", fallingOnly) + " only saw the redline as the revs fell, which reads " +
+                              "lower than where the flash starts, so " + (fallingOnly.Count == 1 ? "it uses" : "they use") +
+                              " the redline the other gears measured.");
                 bool redlinePerGear = ownRedlines.Count >= 2 && ownRedlines.Values.Max() - ownRedlines.Values.Min() > UniformRpm;
                 var before = p.GearOrder.ToDictionary(g => g, g => p.LedRpm[g][0]);
                 foreach (var gear in p.GearOrder)
