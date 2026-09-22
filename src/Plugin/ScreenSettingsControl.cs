@@ -9,6 +9,18 @@ using LovelyCarDataCapture.Screen;
 
 namespace LovelyCarDataCapture.Plugin
 {
+    internal sealed class CapturePageState
+    {
+        public bool Capturing, Exporting, Pending, ExportFailed;
+        public string Status = "", Source = "", Message = "";
+        public string ExportSummary = "No export yet.", ExportDetails = "", ReportPath = "", OutputFolder = "";
+        public string EvidenceFolder = "", ProfilePath = "", Game = "";
+        public bool CanStart => !Capturing && !Exporting && !Pending;
+        public bool CanExport => !Exporting && (Capturing || Pending);
+        public bool CanDiscard => !Exporting && (Capturing || Pending);
+        public string ExportButton => Exporting ? "Exporting…" : Capturing ? "Stop and export" : ExportFailed ? "Retry export" : "Export capture";
+    }
+
     /// <summary>
     /// The plugin's page in SimHub: the buttons a capture actually needs, then everything else folded
     /// away behind them.
@@ -30,8 +42,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Action<Action<PixelRect>, Func<PixelRect, string>> _showBox;
         private readonly Action _pickFromStill;
         private readonly Action<string> _say;
-        private readonly Func<bool> _capturing;
-        private readonly Func<string> _statusText;
+        private readonly Func<CapturePageState> _state;
         private readonly DispatcherTimer _timer;
         private readonly Func<List<AtsrCopy>> _atsrCopies;
         private readonly Func<AtsrCopy, string> _removeAtsrCopy;
@@ -44,12 +55,30 @@ namespace LovelyCarDataCapture.Plugin
         private readonly TextBlock _status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
         private readonly Button _start;
         private readonly Button _stop;
+        private readonly Button _discard;
+        private readonly Button[] _setupButtons;
+        private readonly StackPanel _options = new StackPanel();
+        private readonly StackPanel _diagnostics = new StackPanel();
+        private readonly CheckBox _screenReading;
+        private bool _refreshing;
+        private readonly TextBlock _source = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+        private readonly TextBlock _message = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), MaxWidth = 620 };
+        private readonly TextBlock _exportSummary = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 620 };
+        private readonly TextBlock _exportDetails = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 610 };
+        private readonly Expander _exportDetailsSection;
+        private readonly Button _openReport;
+        private readonly Button _openOutput;
+        private readonly Button _openEvidence;
+        private readonly Button _openBuilder;
+        private readonly TextBlock _builderHelp = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Dim, Margin = new Thickness(0, 6, 0, 0), MaxWidth = 620 };
+        private string _shownExport;
         private readonly ComboBox _topGear = new ComboBox { Width = 80, Margin = new Thickness(10, 0, 0, 0) };
 
         public ScreenSettingsControl(CaptureSettings settings, Action save, Func<PixelRect, string> test,
                                      Action<Action<PixelRect>, Func<PixelRect, string>> showBox, Action pickFromStill, Action<string> say,
-                                     Func<string> outputFolder, Action start, Action stop, Func<bool> capturing,
-                                     Func<string> status, Func<List<AtsrCopy>> atsrCopies, Func<AtsrCopy, string> removeAtsrCopy,
+                                     Func<string> outputFolder, Action start, Action stop, Action discard,
+                                     Func<CapturePageState> state, Action<string> openPath, Action openBuilder,
+                                     Func<List<AtsrCopy>> atsrCopies, Func<AtsrCopy, string> removeAtsrCopy,
                                      Action openAtsrFolder)
         {
             _atsrCopies = atsrCopies;
@@ -60,8 +89,7 @@ namespace LovelyCarDataCapture.Plugin
             _showBox = showBox;
             _pickFromStill = pickFromStill;
             _say = say;
-            _capturing = capturing;
-            _statusText = status;
+            _state = state;
 
             var panel = new StackPanel { Margin = new Thickness(18, 14, 18, 24), MaxWidth = 700, HorizontalAlignment = HorizontalAlignment.Left };
 
@@ -92,7 +120,7 @@ namespace LovelyCarDataCapture.Plugin
             still.Click += (s, e) =>
             {
                 _pickFromStill();
-                _result.Text = "Switch to the game now: a still is taken in five seconds.";
+                _result.Text = "";
             };
             var box = new Button
             {
@@ -114,18 +142,34 @@ namespace LovelyCarDataCapture.Plugin
             _stop = new Button { Content = "Stop and export", Padding = new Thickness(14, 6, 14, 6) };
             _stop.Click += (s, e) => { stop(); Tick(); };
 
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-            buttons.Children.Add(still);
-            buttons.Children.Add(box);
-            buttons.Children.Add(testNow);
-            buttons.Children.Add(_start);
-            buttons.Children.Add(_stop);
+            _discard = new Button { Content = "Discard capture", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
+            _discard.Click += (s, e) =>
+            {
+                if (MessageBox.Show("Discard the unsaved capture? Exported files will be kept.", "Discard capture",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                    discard();
+                Tick();
+            };
+            _setupButtons = new[] { still, box, testNow };
+            var buttons = new WrapPanel();
+            buttons.Children.Add(Step("1  PICK", "Frame the car's rev lights.", still));
+            buttons.Children.Add(Step("2  RECORD", "Make a few slow sweeps.", _start));
+            var exportStep = Step("3  EXPORT", "Save the file and report.", _stop);
+            exportStep.Children.Add(TopGear());
+            buttons.Children.Add(exportStep);
 
             var actions = new StackPanel();
             actions.Children.Add(buttons);
-            actions.Children.Add(new Border { Margin = new Thickness(0, 8, 0, 0), Child = _region });
+            actions.Children.Add(_source);
             actions.Children.Add(_status);
-            actions.Children.Add(_result);
+            actions.Children.Add(_message);
+            actions.Children.Add(new TextBlock { Text = "Start below the first light, rev slowly to the limiter, and hold it briefly. The report checks what was measured.", Foreground = Dim, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 6), MaxWidth = 620 });
+            actions.Children.Add(Section("Adjust or test the capture box", false,
+                new WrapPanel { Margin = new Thickness(0, 0, 0, 6), Children = { box, testNow } }, _region, _result));
+            _discard.HorizontalAlignment = HorizontalAlignment.Left;
+            _discard.Margin = new Thickness(0, 6, 0, 0);
+            _discard.Padding = new Thickness(10, 3, 10, 3);
+            actions.Children.Add(_discard);
             panel.Children.Add(new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255)),
@@ -136,15 +180,29 @@ namespace LovelyCarDataCapture.Plugin
                 Child = actions,
             });
 
-            panel.Children.Add(new TextBlock
-            {
-                Text = "In short: frame the rev lights, start the capture, rev slowly to the limiter a few times, stop and export.",
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 14, 0, 8),
-            });
+            var review = new StackPanel();
+            review.Children.Add(new TextBlock { Text = "4  REVIEW", Foreground = Accent, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+            review.Children.Add(new TextBlock { Text = "Last export", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+            review.Children.Add(_exportSummary);
+            _exportDetailsSection = Section("Details and checks", false, _exportDetails);
+            _openReport = new Button { Content = "Open report", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(0, 0, 8, 0) };
+            _openReport.Click += (s, e) => openPath(_state().ReportPath);
+            _openOutput = new Button { Content = "Open output folder", Padding = new Thickness(10, 4, 10, 4) };
+            _openOutput.Click += (s, e) => openPath(_state().OutputFolder);
+            _openBuilder = new Button { Content = "Copy JSON + open Builder", Padding = new Thickness(10, 4, 10, 4),
+                ToolTip = "Copies the exported car JSON to the clipboard and opens RPM LED Builder with the capture's game. Click Import copied capture in the browser; paste into its text box if clipboard access fails." };
+            _openBuilder.Click += (s, e) => openBuilder();
+            _openEvidence = new Button { Content = "Open capture files", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0),
+                ToolTip = "This capture's raw frames, box images, settings, build version and report." };
+            _openEvidence.Click += (s, e) => openPath(_state().EvidenceFolder);
+            review.Children.Add(new WrapPanel { Margin = new Thickness(0, 10, 0, 0), Children = { _openReport, _openBuilder } });
+            review.Children.Add(_builderHelp);
+            review.Children.Add(_exportDetailsSection);
+            review.Children.Add(new WrapPanel { Margin = new Thickness(0, 6, 0, 0), Children = { _openOutput, _openEvidence } });
+            panel.Children.Add(new Border { BorderBrush = new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(12), Margin = new Thickness(0, 12, 0, 12), Child = review });
 
             // ---- the detail, folded away ----
-            panel.Children.Add(Section("Before the first capture", true,
+            panel.Children.Add(Section("Before the first capture", false,
                 Bullet("The game must run borderless or windowed. Nothing outside it can read the screen in exclusive fullscreen."),
                 Bullet("The cockpit camera has to stay still: turn off head movement, camera shake and motion blur, and leave seat position and field of view alone once the box is placed."),
                 Bullet("Sit in the car with the lights in view, press Pick the lights, and switch to the game before the countdown ends. Then draw a box round the lights on the still, with a little room to spare. The PickCaptureBox button does the same from the car, straight away."),
@@ -195,52 +253,43 @@ namespace LovelyCarDataCapture.Plugin
 
             panel.Children.Add(Section("Buttons you can map", false,
                 Paragraph("All of this works from here, so mapping is only needed for a game that stops running when it loses focus. In SimHub's Controls and events:"),
-                Bullet("StartCapture, StopAndExport, and ResetCapture to throw away what's been recorded."),
+                Bullet("StartCapture starts recording. StopAndExport saves the capture, or retries a failed export. ResetCapture discards the unsaved capture."),
                 Bullet("PickCaptureBox takes a still there and then for drawing the box; ShowCaptureBox opens the live frame."),
                 Bullet("MarkLed, MarkRedline and UndoMark, for games whose lights can't be read on screen: pressed by hand as each light comes on.")));
 
             // ---- options ----
-            panel.Children.Add(new TextBlock
-            {
-                Text = "Options",
-                FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 18, 0, 2),
-            });
-            panel.Children.Add(new TextBlock
-            {
-                Text = "Hover any of these for what it does.",
-                Foreground = Dim,
-                Margin = new Thickness(0, 0, 0, 6),
-            });
-            panel.Children.Add(Check("Read the rev lights off the screen", settings.ScreenCapture,
+            panel.Children.Add(Section("Capture and export options", false, _options));
+            panel.Children.Add(Section("Diagnostics", false, _diagnostics));
+            _options.Children.Add(Paragraph("Hover a setting for details. Changed screen options apply from the next capture."));
+            var screenOption = Check("Read the rev lights off the screen", settings.ScreenCapture,
                                      "Needed for every game except F1 and iRacing, which report their lights directly.",
-                                     v => _settings.ScreenCapture = v));
-            panel.Children.Add(FrameRate());
-            panel.Children.Add(Check("Use the measured values for gears that weren't swept", settings.CopyMeasuredToOtherGears,
+                                     v => _settings.ScreenCapture = v);
+            _screenReading = (CheckBox)screenOption.Children[0];
+            _options.Children.Add(screenOption);
+            _options.Children.Add(FrameRate());
+            _options.Children.Add(Check("Use the measured values for gears that weren't swept", settings.CopyMeasuredToOtherGears,
                                      "For when only one gear could be swept cleanly. Two gears that agree are pooled anyway. Without " +
                                      "this, unswept gears keep the repo file's values and the file ends up saying two different things.",
                                      v => _settings.CopyMeasuredToOtherGears = v));
-            panel.Children.Add(TopGear());
-            panel.Children.Add(Check("Keep each capture's raw frames", settings.SaveCaptureFrames,
+            _diagnostics.Children.Add(Check("Keep each capture's raw frames", settings.SaveCaptureFrames,
                                      "Writes <car>.frames.csv next to the export: every frame's RPM and the lights seen in it. " +
                                      "It lets a capture be checked again later, by a newer version of the plugin or when a value " +
                                      "looks odd, without driving it again. A few MB for a long capture.",
                                      v => _settings.SaveCaptureFrames = v));
-            panel.Children.Add(Check("Keep images around light changes", settings.SaveTransitionFrames,
+            _diagnostics.Children.Add(Check("Keep images around light changes", settings.SaveTransitionFrames,
                                      "Keeps the previous, current and following screen images when the detected LED count or colour state changes. " +
                                      "It is useful for diagnosing a difficult car, but is off by default and bounded to a small export.",
                                      v => _settings.SaveTransitionFrames = v));
-            panel.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
+            _options.Children.Add(Check("Start from the car's file in the repo", settings.UseRepoFile,
                                      "Looks the car up on GitHub, read-only, and keeps its name, colours, gaps and anything not measured.",
                                      v => _settings.UseRepoFile = v));
-            panel.Children.Add(Check("Copy each export to ATSR's local RPM folder", settings.CopyToAtsrDeveloperFolder,
+            _options.Children.Add(Check("Copy each export to ATSR's local RPM folder", settings.CopyToAtsrDeveloperFolder,
                                      "Puts the file on your wheel straight after the drive, before you submit it: the export is copied " +
                                      "where ATSR looks first and ATSR is told to reload. Needs ATSR's Enable Local RPM Folder on (Universal " +
                                      "Settings > RPM Settings > Developer Settings). Remove the copy afterwards from \"Checking a file on " +
                                      "the wheel\" above, or ATSR keeps using it instead of the repo's file.",
                                      v => _settings.CopyToAtsrDeveloperFolder = v));
-            panel.Children.Add(Check("Show the panel over the game", settings.ShowOverlay,
+            _options.Children.Add(Check("Show the panel over the game", settings.ShowOverlay,
                                      "Says what each button press did and how the capture is going. Drag it anywhere; it never takes focus.",
                                      v => _settings.ShowOverlay = v, "Show it now", () =>
                                      {
@@ -248,7 +297,7 @@ namespace LovelyCarDataCapture.Plugin
                                          else _result.Text = "Tick \"Show the panel over the game\" first.";
                                      }));
 
-            panel.Children.Add(new TextBlock
+            _diagnostics.Children.Add(new TextBlock
             {
                 Text = @"RPM rounding and the LED count for brand-new cars live in PluginsData\Common\CapturePlugin.CaptureSettings.json, edited with SimHub closed.",
                 TextWrapping = TextWrapping.Wrap,
@@ -277,6 +326,7 @@ namespace LovelyCarDataCapture.Plugin
             catch (Exception ex) { _atsrResult.Text = "Couldn't read ATSR's folder: " + ex.Message; return; }
             if (copies.Count == 0)
             {
+                _atsrSection.Header = "Checking a file on the wheel (ATSR)";
                 _atsrList.Children.Add(new TextBlock { Text = "No copies there now.", Foreground = Dim });
                 return;
             }
@@ -344,8 +394,8 @@ namespace LovelyCarDataCapture.Plugin
                 ToolTip = new TextBlock { Text = explanation, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 },
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            box.Checked += (s, e) => { set(true); _save(); };
-            box.Unchecked += (s, e) => { set(false); _save(); };
+            box.Checked += (s, e) => { if (!_refreshing) { set(true); _save(); } };
+            box.Unchecked += (s, e) => { if (!_refreshing) { set(false); _save(); } };
 
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
             row.Children.Add(box);
@@ -393,6 +443,17 @@ namespace LovelyCarDataCapture.Plugin
             return row;
         }
 
+        private static StackPanel Step(string title, string hint, Button button)
+        {
+            var step = new StackPanel { Width = 195, Margin = new Thickness(0, 0, 12, 10) };
+            step.Children.Add(new TextBlock { Text = title, Foreground = Accent, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+            button.Margin = new Thickness(0);
+            step.Children.Add(button);
+            step.Children.Add(new TextBlock { Text = hint, Foreground = Dim, Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap });
+            return step;
+        }
+
         private StackPanel TopGear()
         {
             _topGear.Items.Add("Auto");
@@ -401,6 +462,7 @@ namespace LovelyCarDataCapture.Plugin
                 ? _settings.TopGearForNextExport : 0;
             _topGear.SelectionChanged += (s, e) =>
             {
+                if (_refreshing) return;
                 _settings.TopGearForNextExport = _topGear.SelectedIndex;
                 _save();
             };
@@ -411,32 +473,59 @@ namespace LovelyCarDataCapture.Plugin
                 ToolTip = "If SimHub does not know the car's gear count, choose its highest forward gear before exporting. " +
                           "Unreached gears use captured values as fallbacks. This returns to Auto after a successful export.",
             };
-            row.Children.Add(new TextBlock { Text = "Top gear for next export", VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(new TextBlock { Text = "Top gear", VerticalAlignment = VerticalAlignment.Center });
             row.Children.Add(_topGear);
             return row;
         }
 
         /// <summary>Keeps the buttons and the lines under them in step with what the capture is doing.</summary>
-        private void Tick()
+        internal void Tick()
         {
-            bool running = _capturing();
-            _start.IsEnabled = !running;
-            _stop.IsEnabled = running;
-            _status.Text = _statusText();
-            _status.Foreground = running ? Accent : Dim;
-            if (_topGear.SelectedIndex != _settings.TopGearForNextExport)
+            var state = _state();
+            _start.IsEnabled = state.CanStart;
+            _stop.IsEnabled = state.CanExport;
+            _stop.Content = state.ExportButton;
+            _discard.IsEnabled = state.CanDiscard;
+            _discard.Visibility = state.Capturing || state.Pending ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var button in _setupButtons) button.IsEnabled = !state.Exporting;
+            _options.IsEnabled = !state.Exporting;
+            _diagnostics.IsEnabled = !state.Exporting;
+            _topGear.IsEnabled = !state.Exporting;
+            _atsrSection.IsEnabled = !state.Exporting;
+            _status.Text = state.Status;
+            _status.Foreground = state.Capturing || state.Exporting ? Accent : Dim;
+            _source.Text = "Source: " + state.Source;
+            _message.Text = state.Message == state.ExportSummary ? "" : state.Message;
+            _message.Visibility = string.IsNullOrEmpty(_message.Text) ? Visibility.Collapsed : Visibility.Visible;
+            _exportSummary.Text = state.ExportSummary;
+            _exportDetails.Text = state.ExportDetails;
+            _exportDetailsSection.Visibility = string.IsNullOrEmpty(state.ExportDetails) ? Visibility.Collapsed : Visibility.Visible;
+            _openReport.IsEnabled = !state.Exporting && !string.IsNullOrEmpty(state.ReportPath);
+            _openOutput.IsEnabled = !state.Exporting && !string.IsNullOrEmpty(state.OutputFolder);
+            _openEvidence.IsEnabled = !state.Exporting && !string.IsNullOrEmpty(state.EvidenceFolder);
+            _openBuilder.IsEnabled = !state.Exporting && !string.IsNullOrEmpty(state.ProfilePath);
+            _builderHelp.Text = "In RPM LED Builder, click Import copied capture. If clipboard access fails, paste into the text box. Choose a Sim folder only if the game was not recognized.";
+            _builderHelp.Visibility = string.IsNullOrEmpty(state.ProfilePath) ? Visibility.Collapsed : Visibility.Visible;
+            if (_shownExport != state.ExportSummary)
+            {
+                _shownExport = state.ExportSummary;
+                if (!state.Exporting) ShowAtsrCopies();
+            }
+            _refreshing = true;
+            try
+            {
                 _topGear.SelectedIndex = _settings.TopGearForNextExport;
+                _screenReading.IsChecked = _settings.ScreenCapture;
+            }
+            finally { _refreshing = false; }
+            ShowRegion();
         }
 
         private PixelRect Box() => new PixelRect(_settings.ScreenBoxX, _settings.ScreenBoxY, _settings.ScreenBoxWidth, _settings.ScreenBoxHeight);
 
         private void Saved(PixelRect region)
         {
-            _settings.ScreenBoxX = region.X;
-            _settings.ScreenBoxY = region.Y;
-            _settings.ScreenBoxWidth = region.Width;
-            _settings.ScreenBoxHeight = region.Height;
-            _save();
+            // The plugin saves both the box and screen-reading setting for live and still picking.
             ShowRegion();
             _result.Text = _test(region);
         }

@@ -2052,8 +2052,13 @@ namespace LovelyCarDataCapture.Tests
                 var control = new LovelyCarDataCapture.Plugin.ScreenSettingsControl(
                     settings, () => { }, Describe, (save, test) => { }, () => { }, Console.WriteLine,
                     () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SimHub", "LovelyCarDataCapture"),
-                    () => capturing = true, () => capturing = false, () => capturing,
-                    () => capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing",
+                    () => capturing = true, () => capturing = false, () => capturing = false,
+                    () => new LovelyCarDataCapture.Plugin.CapturePageState
+                    {
+                        Capturing = capturing,
+                        Status = capturing ? "Recording - gear 3 - 7450 rpm - 7 lights lit - 1420 frames" : "Not capturing",
+                        Source = "Screen reading",
+                    }, path => { }, () => { },
                     () => new List<AtsrCopy>
                     {
                         new AtsrCopy { File = "ginetta-g55-gt4.json", Game = "AssettoCorsaCompetizione", Written = new DateTime(2026, 9, 18, 8, 36, 0) },

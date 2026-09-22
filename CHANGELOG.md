@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 - 2026-09-21
+
+### Workflow
+
+- Turn on screen reading automatically when a valid capture box is saved, and show the active source
+  and capture/export state at the top of the plugin page, including paused, replay/menu, pit-limiter,
+  telemetry-gap and screen-error status.
+- Keep a pending capture when the game or car changes, after a failed export, or until shutdown tries
+  to export it. The page now offers export, retry and discard actions around that retained capture,
+  and disables conflicting actions while exporting.
+- Add a session-only **Last export** area with the car, outcome, key warnings, details, and buttons to
+  open the report or output folder, independent of the overlay.
+- Arrange the main page as Pick, Record, Export and Review, with setup and diagnostic controls folded away.
+- Add **Copy JSON + open Builder** for successful car exports. The JSON stays on the clipboard;
+  the launch URL supplies the game. Click **Import copied capture** in the browser, with a paste
+  fallback if clipboard access is unavailable. The owner verified the deployed Builder handoff.
+- Keep stable per-session evidence folders under `<game>/captures/<car>/<timestamp-id>/`, reused by
+  retry export, with `capture.json` metadata, outputs, optional raw CSV, `transitions/` and up to
+  eight selection/representative crop images within 16 MiB.
+- Back up the latest raw frames CSV alongside the latest JSON and report before replacing them.
 
 ### Colours
 
@@ -15,6 +34,7 @@
 ### Development
 
 - `tools/replay-all.ps1` replays every saved capture and lists what a change did to each car.
+- Add regression coverage for capture/export states, retry, retained evidence and the Builder URL contract.
 
 ## 0.2.2 - 2026-09-21
 

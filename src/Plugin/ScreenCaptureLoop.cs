@@ -15,6 +15,7 @@ namespace LovelyCarDataCapture.Plugin
         public long SessionId;
         public string Game;
         public string Car;
+        public CaptureEvidence Evidence;
         /// <summary>The capture has all the frames it can keep: nothing to read the screen for.</summary>
         public bool Full;
     }
@@ -52,10 +53,12 @@ namespace LovelyCarDataCapture.Plugin
         public Func<ScreenTarget> Target;
 
         private volatile string _status = "off";
+        private volatile string _guidance = "";
         private volatile int _lights;
         private long _frames;
 
         public string Status => _status;
+        public string Guidance => _guidance;
         public int LightsSeen => _lights;
         public long Frames => Interlocked.Read(ref _frames);
 
@@ -75,6 +78,8 @@ namespace LovelyCarDataCapture.Plugin
                 var token = _stop.Token;
                 _running = true;
                 _status = "starting";
+                _guidance = "Starting screen reading…";
+                _lights = 0;
                 _thread = new Thread(() => Run(token)) { IsBackground = true, Name = "LovelyCarDataCapture screen" };
                 _thread.Start();
             }
@@ -93,6 +98,7 @@ namespace LovelyCarDataCapture.Plugin
                 _stop?.Dispose();
                 _stop = null;
                 _status = "off";
+                _guidance = "";
             }
         }
 
@@ -127,6 +133,7 @@ namespace LovelyCarDataCapture.Plugin
                         {
                             _transitions?.BreakSequence();
                             _status = target != null ? "capture full - press Stop and export" : "waiting for the car";
+                            _guidance = target != null ? "Capture full. Press Stop and export; no more frames are being recorded." : "";
                             stop.WaitHandle.WaitOne(IdleIntervalMs);
                             continue;
                         }
@@ -140,6 +147,7 @@ namespace LovelyCarDataCapture.Plugin
                                 SimHub.Logging.Current.Warn("[LovelyCarDataCapture] Screen capture failed: " + problem);
                             }
                             _status = "can't read the screen: " + problem;
+                            _guidance = "Screen capture failed: " + problem + ". Check the capture box and use borderless or windowed mode.";
                         }
                         else
                         {
@@ -159,13 +167,18 @@ namespace LovelyCarDataCapture.Plugin
                                 _lights = blobs.Count;
                                 Interlocked.Increment(ref _frames);
                                 target.Capture.Record(telemetry.Gear, telemetry.Rpm, acquiredAt, blobs);
+                                target.Evidence?.Observe(frame, _region, _fps, acquiredAt, telemetry.Gear, telemetry.Rpm, blobs.Count, target.Capture.SampleCount);
                                 RecordTransitions(target.Capture, frame, blobs, acquiredAt, telemetry.Gear, telemetry.Rpm);
                                 _status = "recording, " + blobs.Count + " lights lit";
+                                _guidance = "";
                             }
                             else
                             {
                                 _transitions?.BreakSequence();
                                 _status = "waiting for " + TelemetryStatus(status);
+                                _guidance = status == TelemetrySampleStatus.GearChanged
+                                    ? "Waiting for a stable gear. Hold a gear for the next sweep."
+                                    : "Waiting for fresh telemetry. Check that SimHub is receiving game data.";
                             }
                         }
                     }
@@ -173,6 +186,7 @@ namespace LovelyCarDataCapture.Plugin
                     {
                         _transitions?.BreakSequence();
                         _status = "error: " + ex.Message;
+                        _guidance = "Screen capture failed: " + ex.Message + ". Check the capture box or stop and retry.";
                         SimHub.Logging.Current.Error("[LovelyCarDataCapture] Screen capture loop", ex);
                         stop.WaitHandle.WaitOne(1000);
                     }

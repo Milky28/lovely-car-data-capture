@@ -19,9 +19,12 @@ namespace LovelyCarDataCapture.Tests
                 var bytes = new byte[] { 0xef, 0xbb, 0xbf, 123, 125, 13, 10 };
                 File.WriteAllBytes(profile, bytes);
                 File.WriteAllText(report, "Previously checked report\r\n");
+                var frames = Path.ChangeExtension(profile, ".frames.csv");
+                File.WriteAllText(frames, "original raw recording");
                 var first = ExportBackup.KeepPrevious(profile, report);
                 Check(File.ReadAllBytes(Path.Combine(first, "car.json")).SequenceEqual(bytes), "original JSON bytes preserved");
                 Equal(File.ReadAllText(report), File.ReadAllText(Path.Combine(first, "car.report.txt")), "report preserved together");
+                Equal("original raw recording", File.ReadAllText(Path.Combine(first, "car.frames.csv")), "legacy raw frames survive replacement");
                 File.WriteAllText(profile, "second capture");
                 var second = ExportBackup.KeepPrevious(profile, report);
                 Check(first != second, "successive exports have distinct backups");

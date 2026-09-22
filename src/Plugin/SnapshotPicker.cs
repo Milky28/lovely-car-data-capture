@@ -56,14 +56,20 @@ namespace LovelyCarDataCapture.Plugin
         /// <summary>Keep the exact pixels the detector saw inside the accepted capture box.</summary>
         public void SaveRegion(string path, PixelRect region)
         {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            File.WriteAllBytes(path, RegionPng(region));
+        }
+
+        internal byte[] RegionPng(PixelRect region)
+        {
             int x = Math.Max(0, region.X - Left), y = Math.Max(0, region.Y - Top);
             int width = Math.Min(region.Width, Frame.Width - x), height = Math.Min(region.Height, Frame.Height - y);
             if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(region));
-            var source = BitmapSource.Create(Frame.Width, Frame.Height, 96, 96, PixelFormats.Bgra32, null, Frame.Pixels, Frame.Stride);
+            var source = BitmapSource.Create(Frame.Width, Frame.Height, 96, 96,
+                Frame.BytesPerPixel == 4 ? PixelFormats.Bgra32 : PixelFormats.Rgb24, null, Frame.Pixels, Frame.Stride);
             var png = new PngBitmapEncoder();
             png.Frames.Add(BitmapFrame.Create(new CroppedBitmap(source, new Int32Rect(x, y, width, height))));
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
-            using (var file = File.Create(path)) png.Save(file);
+            using (var stream = new MemoryStream()) { png.Save(stream); return stream.ToArray(); }
         }
     }
 

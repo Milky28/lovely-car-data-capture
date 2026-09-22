@@ -12,7 +12,7 @@ reads them from telemetry.
 
 ## Install
 
-Current release: [v0.2.2](https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.2),
+Latest published release: [v0.2.2](https://github.com/Milky28/lovely-car-data-capture/releases/tag/v0.2.2),
 with screen detection fixes for lights that blow out, drift in colour or only light at the redline. See the [changelog](CHANGELOG.md) for details.
 
 1. Download `LovelyCarDataCapture.dll` from the [latest release](https://github.com/Milky28/lovely-car-data-capture/releases/latest).
@@ -31,7 +31,8 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
 1. **Sit in the car** with the rev lights in view.
 2. On the plugin's page press **Pick the lights…**, then switch to the game. Five seconds later it
    takes a still of the screen: draw a box round the lights, a little outside them, and press Enter.
-   The banner says how many lit lights it finds in the box.
+   Saving a valid box turns on screen reading automatically. The top of the page shows the active
+   source and whether the plugin is waiting, recording, exporting or holding a capture to export.
 
    <img src="docs/images/pick-the-lights.jpg" width="360" alt="A still of ACC with an orange box drawn round the dash's rev lights and a banner reporting six lit lights found">
 3. Press **Start capture**.
@@ -42,17 +43,36 @@ Run the game **borderless or windowed**, and turn off head movement and camera s
    what's being recorded.
 
    <img src="docs/images/capturing.jpg" width="420" alt="The recording panel over ACC: gear 2, 6768 rpm, 6 lights lit, 791 frames">
-5. If SimHub cannot report the car's gear count and you could not reach the higher gears, set
-   **Top gear for next export** to the car's highest forward gear (1–12). Unreached gears use
-   fallback values; check the report and verify them in game. The choice resets to **Auto** after
-   a successful export.
+5. In the **Export** step, if SimHub cannot report the car's gear count and you could not reach the
+   higher gears, set **Top gear** to the car's highest forward gear (1–12). Unreached gears use
+   fallback values; check the report and verify them in game. The choice resets to **Auto** after a
+   successful export.
 6. Press **Stop and export**.
+7. Review the **Last export** area. For a successful normal car file, **Copy JSON + open Builder**
+   copies the JSON and opens the Builder. Click **Import copied capture** in the browser to import
+   it with the capture's game selected. If clipboard access fails, paste into the text box instead.
+   Unknown games require manual **Sim folder** selection.
 
-The car file and its report are written to `Documents\SimHub\LovelyCarDataCapture\<game>\`.
-Replacing an export saves its previous JSON and report in that game's `backups` folder first.
+The plugin page keeps the main path as **Pick**, **Start**, **Export** and **Review**. Setup, help and
+diagnostics stay folded away until you need them. Its live status tells you when the game is paused,
+in replay or menu, on the pit limiter, missing telemetry needed for screen frames, or hitting a screen
+reading error.
+
+The latest car file and report are still written to
+`Documents\SimHub\LovelyCarDataCapture\<game>\`. Each session export also keeps its own folder under
+`<game>\captures\<car>\<timestamp-id>\`, with `capture.json`, the exported `car.json` and
+`report.txt`, raw CSV when enabled, selection/representative crop images and optional transition
+images.
+Replacing an export saves its previous JSON, report and raw frames CSV in that game's `backups` folder first.
 Gears not captured this time keep their previous RPM values. Confirmed color and blink adjustments
 can be kept in a [local overrides file](docs/reference.md#keeping-confirmed-colors-and-blink-timing).
-Forgot to stop? Closing SimHub exports a capture that's still running.
+If an export fails, the capture stays loaded so you can fix the problem and press **Retry export**.
+If the game or car changes mid-capture, recording stops and the previous capture is held until you
+choose **Export capture** or **Discard capture**. Closing SimHub attempts to export any unsaved
+capture that is still running or pending.
+
+The plugin page keeps a **Last export** area for the current SimHub session, even when the overlay is
+off: car, outcome, important warnings, details, and buttons to open the report or output folder.
 Read the report: it says what was measured, how tightly, what was left out and why. From the
 Ginetta's:
 
@@ -95,9 +115,9 @@ of the repo's file, so remove it from the plugin's page (*Checking a file on the
 
 ## Submit it
 
-Open the file in the [RPM LED Builder](https://milky28.github.io/rpm-led-builder/) for a last look,
-then contribute it to [Lovely Car Data](https://github.com/Lovely-Sim-Racing/lovely-car-data) as a
-pull request.
+Use **Copy JSON + open Builder**, then click **Import copied capture** in the browser for a last look.
+Check the **Sim folder** matches the game the plugin exported under, then contribute it to
+[Lovely Car Data](https://github.com/Lovely-Sim-Racing/lovely-car-data) as a pull request.
 
 ## Games
 

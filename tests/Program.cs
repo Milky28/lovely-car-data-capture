@@ -27,6 +27,7 @@ namespace LovelyCarDataCapture.Tests
             if (args.Contains("--replay")) { Replay(args); return 0; }
             for (int i = 0; i < args.Length - 1; i++)
             {
+                if (args[i] == "--workflow-images") { RenderWorkflowPages(args[i + 1]); return 0; }
                 if (args[i] == "--box") { ShowCaptureBox(args[i + 1]); return 0; }
                 if (args[i] == "--still") { ShowStillPicker(args[i + 1]); return 0; }
                 if (args[i] != "--grab") continue;
@@ -112,6 +113,16 @@ namespace LovelyCarDataCapture.Tests
             Run("Pooling preserves unmeasured values in each gear", ScreenPoolingPreservesUnmeasuredValues);
             Run("Screen restart waits for the old worker", ScreenRestartWaitsForWorker);
             Run("Reset stops and clears capture", ResetStopsCapture);
+            Run("Workflow export failures retain a retryable capture", WorkflowExportRetry);
+            Run("Workflow exporting excludes conflicting actions", WorkflowExportExcludesOtherActions);
+            Run("Workflow car and game changes preserve the capture", WorkflowCarChangeKeepsCapture);
+            Run("Workflow page keeps controls and results in sync", WorkflowPageReflectsState);
+            Run("Workflow accepting a box enables screen reading", WorkflowBoxEnablesScreenReading);
+            Run("Workflow live status explains interrupted recording", WorkflowLiveStatus);
+            Run("Workflow Builder launch uses the clipboard-import URL contract", WorkflowBuilderLaunchUrl);
+            Run("Capture evidence retains exact inputs across retry and new captures", EvidenceKeepsCaptureInputs);
+            Run("Capture evidence honors image limits and raw-frame retention", EvidenceHonorsLimitsAndRetention);
+            Run("Capture evidence retries after correcting the output folder", EvidenceRecoversInvalidOutputFolder);
             Run("Screen capture keeps a blinking strip out of the thresholds", ScreenBlinkingStripIsNotAThreshold);
             Run("A real blinking M8 capture reads correctly", ScreenRealBlinkingM8);
             Run("A real ACC capture reads correctly through the fade", ScreenRealAccFades);

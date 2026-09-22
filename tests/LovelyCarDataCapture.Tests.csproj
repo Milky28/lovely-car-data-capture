@@ -30,6 +30,10 @@
       <HintPath>$(SimHubPath)GameReaderCommon.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <Reference Include="iRacingSDK">
+      <HintPath>$(SimHubPath)iRacingSDK.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <Reference Include="SimHub.Logging">
       <HintPath>$(SimHubPath)SimHub.Logging.dll</HintPath>
       <Private>true</Private>

@@ -31,6 +31,8 @@ namespace LovelyCarDataCapture
 
         // Actions arrive on a different thread than DataUpdate.
         private readonly object _lock = new object();
+        // Worker start/stop must stay outside _lock: its Target callback takes that lock too.
+        private readonly object _actions = new object();
         private readonly RepoClient _repo = new RepoClient();
         private readonly TelemetryHistory _telemetry = new TelemetryHistory();
         private CaptureSession _session;
@@ -38,6 +40,21 @@ namespace LovelyCarDataCapture
         private long _captureSessionId;
         private Task<RepoLookup> _lookup;
         private volatile bool _capturing;
+        private bool _exporting;
+        private bool _exportPending;
+        private bool _exportFailed;
+        private Task _exportTask;
+        private volatile string _message = "";
+        private string _exportSummary = "No export yet.";
+        private string _exportDetails = "";
+        private string _exportFolder = "";
+        // The page describes the latest attempt; public Last* properties retain the last success.
+        private string _exportReportPath = "";
+        private string _exportEvidenceFolder = "";
+        private string _exportGame = "";
+        private CaptureEvidence _evidence;
+        private CaptureBoxImage _selectedBoxImage;
+        private string _liveGame, _liveCar;
         private volatile string _lastExportPath = "";
         private volatile string _lastReportPath = "";
         private volatile string _lastAtsrDevPath = "";
@@ -52,6 +69,10 @@ namespace LovelyCarDataCapture
         // Latest gear and RPM seen by DataUpdate, for the mark actions (guarded by _lock).
         private string _currentGear;
         private int _currentRpm;
+        private string _captureWaitReason = "";
+        private long _lastTelemetryAt;
+        // Status only: allow brief gaps before asking the driver to check their game connection.
+        private const int TelemetryQuietMs = 1000;
 
         public CaptureSettings Settings;
         public PluginManager PluginManager { get; set; }
@@ -76,7 +97,7 @@ namespace LovelyCarDataCapture
             _screen.Target = ScreenTargetNow;
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
-            this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => StopAndExport());
+            this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => QueueExport());
             this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => ResetCapture());
             // For games that don't report their LEDs: press as each in-game light comes on while revving slowly.
             this.AddAction(actionName: "MarkLed", actionStart: (pm, _) => Mark(redline: false));
@@ -116,7 +137,7 @@ namespace LovelyCarDataCapture
         private void UndoMark()
         {
             string removed;
-            lock (_lock) removed = _session?.Marks.Undo();
+            lock (_lock) removed = _capturing ? _session?.Marks.Undo() : null;
             _lastMark = removed == null ? "Nothing to undo" : "Removed " + removed;
             Say(_lastMark);
             SimHub.Logging.Current.Info(LogPrefix + _lastMark);
@@ -126,12 +147,23 @@ namespace LovelyCarDataCapture
         {
             // Stamp arrival before taking _lock. A busy action must not make telemetry look newer than it was.
             long telemetryAt = CaptureClock.NowMilliseconds;
+            lock (_lock)
+            {
+                _liveGame = data.GameRunning ? data.GameName : null;
+                _liveCar = data.GameRunning ? data.NewData?.CarId : null;
+            }
             if (!_capturing || !data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null)
             {
                 lock (_lock)
                 {
                     _skipScreenFrame = true;
                     _telemetry.Clear(_captureSessionId);
+                    _lastTelemetryAt = telemetryAt;
+                    if (_capturing)
+                        _captureWaitReason = !data.GameRunning ? "Waiting for the game. Start it and enter the car."
+                            : data.GamePaused ? "Game paused. Resume the game to continue recording."
+                            : data.GameReplay ? "Replay is open. Return to live driving to record."
+                            : "Waiting for telemetry. Enter the car and check the game's connection to SimHub.";
                 }
                 return;
             }
@@ -142,6 +174,8 @@ namespace LovelyCarDataCapture
                 {
                     _skipScreenFrame = true;
                     _telemetry.Clear(_captureSessionId);
+                    _lastTelemetryAt = telemetryAt;
+                    _captureWaitReason = "Waiting for a car. Leave the menu and enter the cockpit.";
                 }
                 return;
             }
@@ -150,11 +184,27 @@ namespace LovelyCarDataCapture
             {
                 // A stop or reset may have arrived while this telemetry update waited for the lock.
                 if (!_capturing) return;
-                if (_session == null || _session.CarId != d.CarId || _session.GameName != data.GameName)
+                if (_session != null && (_session.CarId != d.CarId || _session.GameName != data.GameName))
                 {
-                    if (_session != null)
-                        SimHub.Logging.Current.Warn(LogPrefix + "Car changed from " + _session.CarId + " to " + d.CarId + "; the previous capture was discarded. Export before switching cars.");
+                    _capturing = false;
+                    _evidence?.Stop();
+                    _captureSessionId++;
+                    _telemetry.Reset(_captureSessionId);
+                    _skipScreenFrame = true;
+                    _currentGear = null;
+                    _currentRpm = 0;
+                    // The worker now idles. Export/discard joins it outside this lock.
+                    var message = "Car or game changed. Recording stopped; " + _session.CarId + " (" + _session.GameName +
+                        ") is kept. Export it or discard the capture before starting another.";
+                    SimHub.Logging.Current.Warn(LogPrefix + message);
+                    ShowOverlay(false);
+                    Say(message);
+                    return;
+                }
+                if (_session == null)
+                {
                     _session = new CaptureSession(data.GameName, d.CarId);
+                    _exportPending = true;
                     _captureSessionId++;
                     _telemetry.Reset(_captureSessionId);
                     _fullReported = false;
@@ -162,6 +212,8 @@ namespace LovelyCarDataCapture
                 }
 
                 var s = _session;
+                _lastTelemetryAt = telemetryAt;
+                _captureWaitReason = "";
                 _currentGear = d.Gear;
                 _currentRpm = (int)Math.Round(d.Rpms);
                 s.RecordCar(d.CarModel, d.CarClass);
@@ -175,11 +227,15 @@ namespace LovelyCarDataCapture
                     s.PitLimiterSamples++;
                     _skipScreenFrame = true;
                     _telemetry.Clear(_captureSessionId);
+                    _captureWaitReason = "Pit limiter active. Turn it off before the next sweep; its light pattern is not recorded.";
                     return;
                 }
                 _skipScreenFrame = _currentRpm <= 0 || string.IsNullOrEmpty(_currentGear);
                 if (_skipScreenFrame)
+                {
                     _telemetry.Clear(_captureSessionId);
+                    _captureWaitReason = "Waiting for RPM and gear data. Start the engine and check the game's connection to SimHub.";
+                }
                 else
                     _telemetry.Add(_captureSessionId, data.GameName, d.CarId, d.Gear, d.Rpms, telemetryAt);
 
@@ -202,15 +258,22 @@ namespace LovelyCarDataCapture
 
         public void End(PluginManager pluginManager)
         {
-            _shuttingDown = true;
             // A capture left running when SimHub closes would otherwise be lost with it.
+            Task exporting;
+            lock (_actions)
+            lock (_lock)
+            {
+                _shuttingDown = true;
+                exporting = _exportTask;
+            }
+            // An export already in flight owns this session and must finish before shutdown returns.
+            exporting?.GetAwaiter().GetResult();
             bool hasData;
             lock (_lock)
-                hasData = _capturing && _session != null &&
-                          (_session.Screen.HasData || _session.F1.HasData || _session.IRacing.HasData || _session.Marks.HasData);
+                hasData = _exportPending && _session != null;
             if (hasData)
             {
-                SimHub.Logging.Current.Info(LogPrefix + "SimHub is closing with a capture running; exporting it.");
+                SimHub.Logging.Current.Info(LogPrefix + "SimHub is closing with an unsaved capture; exporting it.");
                 try { StopAndExport(RepoWaitOnShutdown, onShutdown: true); }
                 catch (Exception ex) { SimHub.Logging.Current.Error(LogPrefix + "Export on close failed", ex); }
             }
@@ -227,6 +290,7 @@ namespace LovelyCarDataCapture
         /// </summary>
         private void Say(string message)
         {
+            _message = message;
             if (!Settings.ShowOverlay || _shuttingDown) return;
             OnUiThread(() =>
             {
@@ -275,59 +339,97 @@ namespace LovelyCarDataCapture
         {
             lock (_lock)
             {
-                if (!_capturing) return _session == null ? "Not capturing" : "Stopped. " + DescribeProgress(_session);
-                if (_session == null) return "Waiting for the car…";
+                if (_exporting) return "Exporting " + _session?.CarId + "…";
+                if (!_capturing) return _session == null ? "Not capturing" :
+                    (_exportPending ? "Capture kept for export: " + _session.CarId + ". " : "Stopped. ") + DescribeProgress(_session);
+                if (!string.IsNullOrEmpty(_captureWaitReason)) return _captureWaitReason;
+                if (_session == null) return "Waiting for the car. Enter the cockpit to begin recording.";
+                if (CaptureClock.NowMilliseconds - _lastTelemetryAt > TelemetryQuietMs)
+                    return "Waiting for telemetry. Check that the game is running and connected to SimHub.";
+                bool screenSource = !_session.F1.HasData && !_session.IRacing.HasData && (Settings.ScreenCapture || _screen.IsRunning);
+                if (screenSource && !_screen.IsRunning)
+                    return "Screen reading is not running. Pick a capture box to begin.";
+                if (screenSource && !string.IsNullOrEmpty(_screen.Guidance)) return _screen.Guidance;
 
                 var parts = new List<string>();
                 parts.Add(string.IsNullOrEmpty(_currentGear) ? "gear ?" : "gear " + _currentGear);
                 parts.Add(_currentRpm + " rpm");
-                if (Settings.ScreenCapture && _screen.IsRunning) parts.Add(_screen.LightsSeen + " lights lit");
+                if (screenSource) parts.Add(_screen.LightsSeen + " lights lit");
                 var progress = DescribeProgress(_session);
                 if (!string.IsNullOrEmpty(progress)) parts.Add(progress);
                 else parts.Add("no LED data yet");
-                return "Recording · " + string.Join(" · ", parts);
+                return "Recording · " + string.Join(" · ", parts) +
+                    (screenSource && _session.Screen.MostLightsSeen == 0
+                        ? ". No lights seen yet. Rev until some are lit; if the count stays at zero, check the box." : "");
             }
         }
 
         internal void ResetCapture()
         {
-            lock (_lock)
+            lock (_actions)
             {
-                _capturing = false;
-                _captureSessionId++;
-                _telemetry.Reset(_captureSessionId);
-                _session = null;
-                _lookup = null;
-                _skipScreenFrame = true;
-                _currentGear = null;
-                _currentRpm = 0;
+                lock (_lock)
+                {
+                    if (_exporting || _shuttingDown) return;
+                    _capturing = false;
+                    _exportPending = false;
+                    _exportFailed = false;
+                    _captureSessionId++;
+                    _telemetry.Reset(_captureSessionId);
+                    _session = null;
+                    _lookup = null;
+                    _evidence = null;
+                    _skipScreenFrame = true;
+                    _currentGear = null;
+                    _currentRpm = 0;
+                    _captureWaitReason = "";
+                    _lastTelemetryAt = CaptureClock.NowMilliseconds;
+                }
+                _screen.Stop();
+                _screen.ClearTransitionFrames();
+                _repoStatus = "";
+                _lastMark = "";
+                ShowOverlay(false);
+                Say("Capture discarded. Nothing is being recorded.");
             }
-            _screen.Stop();
-            _screen.ClearTransitionFrames();
-            _repoStatus = "";
-            _lastMark = "";
-            ShowOverlay(false);
-            Say("Capture cleared. Nothing is being recorded.");
         }
 
-        private void StartCapture()
+        internal void StartCapture()
         {
-            lock (_lock)
+            lock (_actions)
             {
-                _captureSessionId++;
-                _telemetry.Reset(_captureSessionId);
-                _session = null;
-                _lookup = null;
-                _skipScreenFrame = true;
+                lock (_lock)
+                {
+                    if (_exporting || _capturing || _shuttingDown) return;
+                    if (_exportPending)
+                    {
+                        Say("An unsaved capture is kept. Export it or discard the capture before starting another.");
+                        return;
+                    }
+                    _captureSessionId++;
+                    _telemetry.Reset(_captureSessionId);
+                    _session = null;
+                    _lookup = null;
+                    _evidence = new CaptureEvidence(Settings, _selectedBoxImage);
+                    _skipScreenFrame = true;
+                    _exportFailed = false;
+                    _currentGear = null;
+                    _currentRpm = 0;
+                    _captureWaitReason = "";
+                    _lastTelemetryAt = CaptureClock.NowMilliseconds;
+                    _capturing = true;
+                }
+                _repoStatus = "";
+                _screen.Stop();
+                _screen.ClearTransitionFrames();
+                StartScreenCapture();
+                ShowOverlay(true);
+                if (!Settings.ScreenCapture || _screen.IsRunning)
+                    Say(Settings.ScreenCapture
+                        ? "Capture started, watching the rev lights on screen. Rev slowly from idle to the limiter a few times."
+                        : "Capture started. F1 and iRacing use telemetry; screen reading is off for other games.");
+                SimHub.Logging.Current.Info(LogPrefix + "Capture started.");
             }
-            _repoStatus = "";
-            _capturing = true;
-            StartScreenCapture();
-            ShowOverlay(true);
-            Say(Settings.ScreenCapture && _screen.IsRunning
-                ? "Capture started, watching the rev lights on screen. Rev slowly from idle to the limiter a few times."
-                : "Capture started. Drive through every gear and rev each one to the limiter.");
-            SimHub.Logging.Current.Info(LogPrefix + "Capture started. Drive through every gear and rev each one to the limiter.");
         }
 
         private void StartScreenCapture()
@@ -382,6 +484,7 @@ namespace LovelyCarDataCapture
                     SessionId = _captureSessionId,
                     Game = _session.GameName,
                     Car = _session.CarId,
+                    Evidence = _evidence,
                 };
             }
         }
@@ -405,19 +508,44 @@ namespace LovelyCarDataCapture
         /// Stores the box. The window saves as it is dragged, so this runs often; the capture only
         /// picks the new box up once the window is done, which is when <paramref name="final"/> is set.
         /// </summary>
-        private void SaveCaptureBox(PixelRect region, bool final)
+        private bool SaveCaptureBox(PixelRect region, bool final, CaptureBoxImage image = null)
         {
-            Settings.ScreenBoxX = region.X;
-            Settings.ScreenBoxY = region.Y;
-            Settings.ScreenBoxWidth = region.Width;
-            Settings.ScreenBoxHeight = region.Height;
-            this.SaveCommonSettings("CaptureSettings", Settings);
-            if (!final) return;
+            lock (_actions)
+            {
+                lock (_lock) if (_exporting || _shuttingDown) return false;
+                if (!ApplyCaptureBox(Settings, region, final))
+                {
+                    Say("No valid capture box was saved. Pick the lights before starting screen capture.");
+                    return false;
+                }
+                this.SaveCommonSettings("CaptureSettings", Settings);
+                if (!final) return true;
+                _selectedBoxImage = image;
+                if (_capturing)
+                {
+                    _screen.Stop();
+                    _evidence?.AddSelection(image);
+                    if (_session?.Screen.HasData == true)
+                        _evidence?.Note("The capture box changed during recording. Strip images identify the raw frame ranges; optional transition images cover only the final box.");
+                }
 
-            SimHub.Logging.Current.Info(LogPrefix + "Capture box set to " + region.Width + "x" + region.Height + " at " + region.X + "," + region.Y + ".");
-            Say("Capture box saved: " + region.Width + " x " + region.Height + " at " + region.X + ", " + region.Y + ".");
-            // Already capturing: pick the new box up straight away.
-            if (_capturing && Settings.ScreenCapture) StartScreenCapture();
+                SimHub.Logging.Current.Info(LogPrefix + "Capture box set to " + region.Width + "x" + region.Height + " at " + region.X + "," + region.Y + ".");
+                Say("Capture box saved: " + region.Width + " x " + region.Height + " at " + region.X + ", " + region.Y + ". Screen reading is on.");
+                // Already capturing: pick the new box up straight away.
+                if (_capturing && Settings.ScreenCapture) StartScreenCapture();
+                return true;
+            }
+        }
+
+        internal static bool ApplyCaptureBox(CaptureSettings settings, PixelRect region, bool final)
+        {
+            if (final && (region.Width < 8 || region.Height < 4)) return false;
+            settings.ScreenBoxX = region.X;
+            settings.ScreenBoxY = region.Y;
+            settings.ScreenBoxWidth = region.Width;
+            settings.ScreenBoxHeight = region.Height;
+            if (final) settings.ScreenCapture = true;
+            return true;
         }
 
         /// <summary>
@@ -427,11 +555,14 @@ namespace LovelyCarDataCapture
         /// </summary>
         private void PickFromStill(int countdown)
         {
+            lock (_lock) if (_exporting) return;
             _box?.Close();
             EnsureOverlay();
+            if (countdown > 0) Say("Switch to the game now: a still is taken in five seconds.");
             int left = countdown;
             void Tick()
             {
+                lock (_lock) if (_exporting) return;
                 if (left > 0)
                 {
                     _overlay?.Message("Switch to the game with the rev lights in view. Taking a still in " + left + "…");
@@ -447,6 +578,9 @@ namespace LovelyCarDataCapture
                 System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
                     DesktopSnapshot shot;
+                    string game, car;
+                    lock (_lock) { game = _liveGame; car = _liveCar; }
+                    var shotAt = DateTime.UtcNow;
                     try { shot = DesktopSnapshot.Take(); }
                     catch (Exception ex)
                     {
@@ -457,7 +591,8 @@ namespace LovelyCarDataCapture
                     _overlay?.SetSuppressed(false);
                     var picker = new SnapshotPickerWindow(shot, SettingsBox(), region =>
                     {
-                        SaveCaptureBox(region, final: true);
+                        var image = new CaptureBoxImage { Png = shot.RegionPng(region), Region = region, SelectedUtc = shotAt, Game = game, Car = car };
+                        if (!SaveCaptureBox(region, final: true, image: image)) return;
                         try { shot.SaveRegion(Path.Combine(OutputFolder(), "capture-box.png"), region); }
                         catch (Exception ex) { SimHub.Logging.Current.Warn(LogPrefix + "Couldn't save capture-box.png: " + ex.Message); }
                     });
@@ -471,6 +606,7 @@ namespace LovelyCarDataCapture
         /// <summary>Shows the capture box, or brings the one already open back to the front.</summary>
         private void ShowCaptureBoxFor(Action<PixelRect> onSave, Func<PixelRect, string> test)
         {
+            lock (_lock) if (_exporting) return;
             if (_box != null)
             {
                 _box.Activate();
@@ -485,8 +621,7 @@ namespace LovelyCarDataCapture
                 if (window != null)
                 {
                     var region = window.LastRegion;
-                    SaveCaptureBox(region, final: true);
-                    onSave?.Invoke(region);
+                    if (SaveCaptureBox(region, final: true)) onSave?.Invoke(region);
                 }
             };
             _box.Show();
@@ -498,9 +633,7 @@ namespace LovelyCarDataCapture
             new ScreenSettingsControl(Settings, () => this.SaveCommonSettings("CaptureSettings", Settings),
                                       region => _screen.Describe(region), ShowCaptureBoxFor, () => PickFromStill(5), Say, OutputFolder,
                                       StartCapture,
-                                      // Exporting waits on GitHub, so it can't run on the thread drawing this page.
-                                      () => Task.Run(() => StopAndExport()),
-                                      () => _capturing, OverlayStatus,
+                                      () => QueueExport(), ResetCapture, PageState, OpenExportPath, OpenBuilder,
                                       AtsrCopiesNow, RemoveAtsrCopy,
                                       () => System.Diagnostics.Process.Start("explorer.exe", "\"" + AtsrDevCopies.Folder(SimHubFolder) + "\""));
 
@@ -528,17 +661,131 @@ namespace LovelyCarDataCapture
             }, TaskScheduler.Default);
         }
 
-        private void StopAndExport() => StopAndExport(RepoWaitOnExport, onShutdown: false);
+        internal CapturePageState PageState()
+        {
+            lock (_lock)
+            {
+                string source = _session == null ? "" : DescribeSource(_session);
+                if (_session == null)
+                    source = Settings.ScreenCapture
+                        ? (SettingsBox().Width >= 8 && SettingsBox().Height >= 4 ? "Screen reading; F1/iRacing use telemetry automatically" : "Screen reading needs a capture box")
+                        : "Screen reading off; F1/iRacing telemetry or manual marks";
+                return new CapturePageState
+                {
+                    Capturing = _capturing, Exporting = _exporting, Pending = _exportPending,
+                    ExportFailed = _exportFailed, Status = OverlayStatus(), Source = source, Message = _message,
+                    ExportSummary = _exportSummary, ExportDetails = _exportDetails,
+                    ReportPath = _exportReportPath, OutputFolder = _exportFolder,
+                    EvidenceFolder = _exportEvidenceFolder,
+                    ProfilePath = string.IsNullOrEmpty(_exportReportPath) ? "" : _lastExportPath,
+                    Game = _exportGame,
+                };
+            }
+        }
+
+        private void OpenExportPath(string path)
+        {
+            try
+            {
+                if (!File.Exists(path) && !Directory.Exists(path))
+                    throw new IOException("The file or folder is no longer available: " + path);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception ex) { Say("Couldn't open the export: " + ex.Message); }
+        }
+
+        internal const string BuilderUrl = "https://milky28.github.io/rpm-led-builder/";
+
+        internal static string BuilderLaunchUrl(string game) =>
+            BuilderUrl + "?capture=clipboard&sim=" + Uri.EscapeDataString(game ?? "");
+
+        private void OpenBuilder()
+        {
+            var state = PageState();
+            if (state.Exporting || string.IsNullOrEmpty(state.ProfilePath)) return;
+            try { System.Windows.Clipboard.SetText(File.ReadAllText(state.ProfilePath)); }
+            catch (Exception ex) { Say("Couldn't copy the car JSON: " + ex.Message + ". Open the output folder to copy it manually."); return; }
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(BuilderLaunchUrl(state.Game)) { UseShellExecute = true });
+                Say("Car JSON copied. In RPM LED Builder, click Import copied capture.");
+            }
+            catch (Exception ex) { Say("Car JSON copied, but the browser couldn't open: " + ex.Message + ". Open " + BuilderLaunchUrl(state.Game) + " and click Import copied capture."); }
+        }
+
+        // Reserve the export before queueing it, so a second click or mapped action cannot race it.
+        internal Task QueueExport()
+        {
+            lock (_actions)
+            lock (_lock)
+            {
+                if (_shuttingDown) return _exportTask ?? Task.CompletedTask;
+                if (!BeginExport()) return _exportTask ?? Task.CompletedTask;
+                _exportTask = Task.Run(() => ExportCapture(RepoWaitOnExport, onShutdown: false));
+                return _exportTask;
+            }
+        }
+
+        private bool BeginExport()
+        {
+            if (_exporting) return false;
+            _capturing = false;
+            _evidence?.Stop();
+            _captureSessionId++;
+            _telemetry.Reset(_captureSessionId);
+            _skipScreenFrame = true;
+            if (_session == null || !_exportPending)
+            {
+                Say("Nothing new to export. Start a capture, then drive.");
+                ShowOverlay(false);
+                return false;
+            }
+            _exporting = true;
+            _exportFailed = false;
+            _exportSummary = "Exporting " + _session.CarId + " (" + _session.GameName + ")…";
+            _exportGame = Slug.Make(_session.GameName);
+            _exportDetails = "";
+            _exportReportPath = "";
+            _exportFolder = "";
+            _exportEvidenceFolder = "";
+            return true;
+        }
 
         private void StopAndExport(TimeSpan repoWait, bool onShutdown)
         {
-            _capturing = false;
+            lock (_actions)
             lock (_lock)
             {
-                _captureSessionId++;
-                _telemetry.Reset(_captureSessionId);
-                _skipScreenFrame = true;
+                if (!BeginExport()) return;
             }
+            ExportCapture(repoWait, onShutdown);
+        }
+
+        private void ExportCapture(TimeSpan repoWait, bool onShutdown)
+        {
+            try { WriteExport(repoWait, onShutdown); }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Error(LogPrefix + "Export failed", ex);
+                ExportFailed("Export failed: " + ex.Message);
+            }
+            finally { lock (_lock) _exporting = false; }
+        }
+
+        private void ExportFailed(string message)
+        {
+            try { _evidence?.SaveFailure(_session, Settings, message); }
+            catch (Exception ex) { message += " Capture notes could not be saved: " + ex.Message; }
+            lock (_lock)
+            {
+                _exportFailed = true;
+                _exportSummary = _session.CarId + " (" + _session.GameName + "): " + message;
+            }
+            Say(_exportSummary);
+        }
+
+        private void WriteExport(TimeSpan repoWait, bool onShutdown)
+        {
             _screen.Stop();
             ShowOverlay(false);
 
@@ -557,6 +804,9 @@ namespace LovelyCarDataCapture
                 return;
             }
             Say("Exporting " + session.CarId + "…");
+            if (_evidence == null) _evidence = new CaptureEvidence(Settings);
+            try { _evidence.SaveRaw(session, Settings, _screen, Path.Combine(OutputFolder(), Slug.Make(session.GameName))); }
+            finally { lock (_lock) _exportEvidenceFolder = _evidence.Folder ?? ""; }
 
             RepoLookup lookup = null;
             if (lookupTask != null)
@@ -572,24 +822,28 @@ namespace LovelyCarDataCapture
             {
                 // Exports keep the game's identity; ATSR may need a different development filename.
                 path = Path.Combine(OutputFolder(), Slug.Make(session.GameName), Slug.Make(session.CarId) + ".json");
+                lock (_lock) _exportFolder = Path.GetDirectoryName(path);
                 reportPath = Path.ChangeExtension(path, ".report.txt");
                 var overridesPath = Path.ChangeExtension(path, ".overrides.json");
                 var localOverrides = File.Exists(overridesPath) ? File.ReadAllText(overridesPath) : null;
                 var previousExport = File.Exists(path) ? File.ReadAllText(path) : null;
-                // The session is no longer written to, but DataUpdate may still be mid-frame.
-                lock (_lock)
-                    result = ProfileComposer.Compose(session, Settings, lookup, DateTime.Now, localOverrides, previousExport);
+                // BeginExport waited for DataUpdate and disabled all writers; the screen worker is
+                // joined above. Keep slow analysis outside _lock so the page can show its busy state.
+                result = ProfileComposer.Compose(session, Settings, lookup, DateTime.Now, localOverrides, previousExport);
                 if (localOverrides != null) result.Report.Add("Local overrides: " + overridesPath);
+                result.Report.Add("Capture files: " + _evidence.Folder);
+                result.Report.Add("Capture settings and build: " + Path.Combine(_evidence.Folder, "capture.json"));
+                result.Report.AddRange(_evidence.Notes);
                 if (onShutdown)
                     result.Report.Insert(Math.Min(2, result.Report.Count),
-                        "Exported automatically: SimHub was closed while this capture was still running." + Environment.NewLine);
+                        "Exported automatically: SimHub was closed with an unsaved capture." + Environment.NewLine);
                 json = result.Profile.ToJson();
             }
             catch (Exception ex)
             {
                 // An invalid override must not replace a previously checked export or ATSR copy.
                 SimHub.Logging.Current.Error(LogPrefix + "Couldn't prepare export for " + session.CarId, ex);
-                Say("Export failed: " + ex.Message + " Previous files were kept. Check the local export and overrides, then press Stop and export again.");
+                ExportFailed("Export failed: " + ex.Message + " Previous files were kept. Check the local export and overrides.");
                 return;
             }
 
@@ -608,52 +862,49 @@ namespace LovelyCarDataCapture
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 var backup = ExportBackup.KeepPrevious(path, reportPath);
-                if (backup != null) result.Report.Add("Previous export and report backed up to: " + backup);
+                if (backup != null) result.Report.Add("Previous export, report and raw frames backed up to: " + backup);
                 File.WriteAllText(path, json, utf8);
                 if (framesPath != null)
                 {
-                    lock (_lock)
-                        using (var writer = new StreamWriter(framesPath, false, utf8))
-                            session.Screen.WriteFrames(writer);
+                    File.Copy(_evidence.RawFramesPath, framesPath, true);
                 }
-                try
+                else
                 {
-                    var directory = Path.Combine(Path.GetDirectoryName(path), Path.GetFileNameWithoutExtension(path) +
-                        ".transitions-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                    var diagnostics = _screen.ExportTransitions(session.Screen, directory, session.GameName, session.CarId);
-                    if (diagnostics != null)
-                    {
-                        result.Report.Add("");
-                        result.Report.Add(diagnostics.Report);
-                        if (diagnostics.MetadataPath != null) result.Report.Add("Transition images: " + diagnostics.MetadataPath);
-                        result.Report.AddRange(diagnostics.Errors);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    result.Report.Add("Transition images could not be saved: " + ex.Message + ". The car file was saved.");
+                    // A previous capture's CSV must not masquerade as this export's raw frames.
+                    // KeepPrevious has already saved it, including captures made before archives existed.
+                    File.Delete(Path.ChangeExtension(path, ".frames.csv"));
                 }
                 copied = Settings.CopyToAtsrDeveloperFolder && CopyToAtsrDeveloperFolder(session.GameName, session.CarId, json, result.Report, utf8);
                 File.WriteAllText(reportPath, string.Join(Environment.NewLine, result.Report) + Environment.NewLine, utf8);
+                _evidence.SaveResult(session, Settings, json, string.Join(Environment.NewLine, result.Report) + Environment.NewLine);
                 if (Settings.TopGearForNextExport != 0)
                 {
                     Settings.TopGearForNextExport = 0;
                     this.SaveCommonSettings("CaptureSettings", Settings);
                 }
-                _lastExportPath = path;
-                _lastReportPath = reportPath;
+                lock (_lock)
+                {
+                    _lastExportPath = path;
+                    _lastReportPath = reportPath;
+                    _exportReportPath = reportPath;
+                    _exportPending = false;
+                    _exportSummary = "Saved " + session.CarId + " (" + session.GameName + "). From " + result.Source + "." +
+                        (result.AtsrProblems.Count > 0 ? " " + result.AtsrProblems.Count + " ATSR warning(s)." : "") +
+                        (Settings.CopyToAtsrDeveloperFolder ? (copied ? " Copied to ATSR's local RPM folder." : " ATSR copy failed; see the report.") : "") +
+                        " Read the details and report before submitting.";
+                    var rpmSource = result.Summary.FirstOrDefault(line => line.StartsWith("RPM:", StringComparison.Ordinal));
+                    if (rpmSource != null) _exportSummary += Environment.NewLine + rpmSource;
+                    _exportDetails = string.Join(Environment.NewLine, result.Summary) + Environment.NewLine +
+                        "File: " + path + Environment.NewLine + "Report: " + reportPath;
+                }
                 SimHub.Logging.Current.Info(LogPrefix + "Exported " + path + " (" + result.Source + "). Report: " + reportPath);
                 foreach (var problem in result.AtsrProblems) SimHub.Logging.Current.Warn(LogPrefix + "ATSR: " + problem);
-                Say("Saved " + Path.GetFileName(path) + " to " + Path.GetDirectoryName(path) + "." +
-                    " From " + result.Source + "." +
-                    (result.AtsrProblems.Count > 0 ? " " + result.AtsrProblems.Count + " ATSR warning(s) in the report." : "") +
-                    (copied ? " Also copied to ATSR's local RPM folder and ATSR told to reload: with Enable Local RPM Folder on, the wheel shows it now." : "") +
-                    " Read the report before submitting.");
+                Say(_exportSummary);
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Error(LogPrefix + "Export failed for " + path, ex);
-                Say("Export failed: " + ex.Message);
+                ExportFailed("Export failed: " + ex.Message + " Some files may already have been written; check the output folder.");
             }
         }
 

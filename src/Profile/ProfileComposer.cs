@@ -15,6 +15,7 @@ namespace LovelyCarDataCapture.Profile
         public string Source;
         public List<string> Report = new List<string>();
         public List<string> AtsrProblems = new List<string>();
+        public List<string> Summary = new List<string>();
     }
 
     /// <summary>
@@ -165,9 +166,10 @@ namespace LovelyCarDataCapture.Profile
             r.AddRange(DescribeChanges(baseline, p).Select(x => "  " + x));
             r.Add("");
             r.Add("Final value sources:");
-            r.AddRange(DescribeFinalSources(p, baseline, capturedGears, previousGears, overrideResult,
-                                            cfg.CopyMeasuredToOtherGears, captureApplied, screen, screenResult)
-                .Select(x => "  " + x));
+            result.Summary.AddRange(DescribeFinalSources(p, baseline, capturedGears, previousGears, overrideResult,
+                                            cfg.CopyMeasuredToOtherGears, captureApplied, screen, screenResult));
+            r.AddRange(result.Summary.Select(x => "  " + x));
+            result.Summary.AddRange(notes);
             if (notes.Count > 0)
             {
                 r.Add("");
@@ -175,6 +177,7 @@ namespace LovelyCarDataCapture.Profile
                 r.AddRange(notes.Select(n => "  - " + n));
             }
             result.AtsrProblems = AtsrCompatibility.Check(p, s.GameName, lookup);
+            result.Summary.AddRange(result.AtsrProblems.Select(x => "ATSR: " + x));
             r.Add("");
             r.Add("ATSR compatibility:");
             r.AddRange(result.AtsrProblems.Count > 0 ? result.AtsrProblems.Select(n => "  - " + n) : new[] { "  - no problems found" });
