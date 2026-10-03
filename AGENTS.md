@@ -93,6 +93,10 @@ about ±10-20 rpm; 40-60 in neutral/1st or on the last light before the redline.
   `fork`): Lovely-Sim-Racing/lovely-car-data#48, #49, #50 and #51, all awaiting review. The owner is
   holding further submissions (including the LMU SC63 fix: LEDs 6-8 yellow together ~7400, 9-10 red
   together ~7675) until these are approved. Don't prepare or suggest new upstream PRs until then.
+- `pending-cars/` shares car files that aren't in Lovely Car Data yet (CC BY-NC-SA like Lovely Car
+  Data): the owner's open upstream PRs, copied from the PR heads, and unsubmitted new cars copied from
+  the exports folder. Only new cars, never unsubmitted changes to existing repo files. When a car
+  merges or a PR changes, remove or update its file and the table in `pending-cars/README.md`.
 - Don't assume the DLL installed in SimHub matches the latest build.
 - When the owner confirms colours, "in game" (on screen) is what a capture must match. "On wheel" only
   shows what the current car file says.

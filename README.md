@@ -120,6 +120,9 @@ Use **Copy JSON + open Builder**, then click **Import copied capture** in the br
 Check the **Sim folder** matches the game the plugin exported under, then contribute it to
 [Lovely Car Data](https://github.com/Lovely-Sim-Racing/lovely-car-data) as a pull request.
 
+Cars I've captured that aren't in Lovely Car Data yet, submitted or not, are in
+[pending-cars](pending-cars/README.md), with how to use them in ATSR in the meantime.
+
 ## Games
 
 | Game | How the lights are read | Tested |
@@ -138,4 +141,5 @@ Check the **Sim folder** matches the game the plugin exported under, then contri
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Car files you contribute fall under Lovely Car Data's license.
+MIT, see [LICENSE](LICENSE). Car files you contribute fall under Lovely Car Data's license, as do the
+files in [pending-cars](pending-cars/README.md).
