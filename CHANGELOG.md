@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Camera movement
+
+- Read a capture made with head movement or camera shake on. Each frame is lined up by the spacing of
+  its lit lights before the lights are told apart, and the report says how far the strip ranged. A
+  steady capture is read exactly as before: all 56 saved captures produce the same car file. With
+  artificial sway added to them, 54 give the same file with the strip ranging over 12 px, 53 over
+  24 px and 50 over 40 px. Not yet checked on a real drive with head movement on. See
+  [Camera movement](docs/how-it-works.md#camera-movement) for the limits.
+
 ## 0.2.3 - 2026-09-21
 
 ### Workflow

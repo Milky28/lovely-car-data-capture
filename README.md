@@ -27,7 +27,9 @@ Not listed? Right-click the DLL, choose *Properties*, tick *Unblock*, and start 
 
 ## Your first capture
 
-Run the game **borderless or windowed**, and turn off head movement and camera shake.
+Run the game **borderless or windowed**. Turning off head movement and camera shake gives the cleanest
+reading; if you leave them on, draw the box with room to spare and see
+[camera movement](docs/how-it-works.md#camera-movement).
 
 1. **Sit in the car** with the rev lights in view.
 2. On the plugin's page press **Pick the lights…**, then switch to the game. Five seconds later it

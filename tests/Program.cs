@@ -177,6 +177,9 @@ namespace LovelyCarDataCapture.Tests
             Run("Screen palette naming follows the colors' order", ScreenPaletteNaming);
             Run("Compose a screen capture into the repo file", ComposeScreenIntoRepoFile);
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);
+            Run("Camera sway leaves the car file unchanged", CameraSwayLeavesTheCarFileUnchanged);
+            Run("Steady captures are left as recorded", SteadyCapturesAreLeftAsRecorded);
+            Run("Alignment follows a climb out of the dark back from the full strip", AlignmentFollowsAClimbOutOfTheDark);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
 

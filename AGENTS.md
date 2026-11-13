@@ -36,7 +36,7 @@ OneDrive on this machine), each with a `.frames.csv` of the raw drive.
 regressions came from reordering):
 
 ```
-DropFixtures -> DropIdleAnimation -> StripCalibration -> DropIndicators -> lit/hues
+RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration -> DropIndicators -> lit/hues
 -> FindBlinks (scratch) -> RemoveDisplayLag -> FindBlinks -> FindRedline (per gear)
 -> FindBlinks(with redline) -> exclude indicator / redline-state / gear-settle frames
 -> RedlineFromBlink -> MeasureColors -> per-gear windows -> AverageWithSwitchOff
@@ -44,6 +44,9 @@ DropFixtures -> DropIdleAnimation -> StripCalibration -> DropIndicators -> lit/h
 ```
 
 - `_recorded` is the raw frames; `_samples` is the working copy each pass filters. Never mutate `_recorded`.
+- `src/Screen/StripAlignment.cs` measures camera movement from the spacing of lit lights. A capture whose
+  full strip ranged over 6 px or less is left exactly as recorded, so steady captures can't be changed by
+  it; `_steady` is the recording with the movement taken out. Its limits are in `docs/how-it-works.md`.
 - Display lag is measured in **milliseconds** (0-250 ms, 2 ms steps; tight gap limit first, widened
   to 1000 rpm only if nothing fits - PMR needs that). Don't go back to an RPM offset.
 - `src/Screen/StripDetector.cs`: colour-column blobs, with a white-hot-core fallback (PMR) when the

@@ -100,8 +100,9 @@ hidden to take a reading. Alt-tab brings the pointer back if you want it.
   learned across the box. Detection and colour measurement then follow those heights, including a
   curved strip, so pale lettering below known lights cannot become another LED. Positions stay
   learned while the lights are dark and reset for a new capture or box. Start with a slow full sweep:
-  areas that have not shown a light yet still use the ordinary detector. Keep camera movement off;
-  this is not a tracker for large movements or arbitrary brightly coloured dashboard graphics.
+  areas that have not shown a light yet still use the ordinary detector. This is not a tracker for
+  arbitrary brightly coloured dashboard graphics.
+- **Whether the camera moved**, and by how much in each frame: see [Camera movement](#camera-movement).
 - **Lights drawn white-hot**: PMR draws a lit light as a white centre with only a coloured glow,
   on a rim faintly coloured itself. When the usual colour test sees a smear or nothing, lights are
   found by their white centres instead and coloured from their own glow.
@@ -139,13 +140,43 @@ read alike over every frame stay one colour.
 
 - **Borderless or windowed mode.** Exclusive fullscreen hands its frames straight to the display, where
   nothing else can read them.
-- **A camera that doesn't move.** Turn off head movement and camera shake; a few pixels of drift are
-  fine, but a moving cockpit isn't. VR won't work at all.
+- **A camera that mostly stays put.** Head movement and camera shake are best turned off. Left on,
+  sideways movement is measured and taken out (see [Camera movement](#camera-movement)), within
+  limits. VR won't work at all.
 - **The same lights every time.** Don't change seat position or field of view mid-capture.
 
 `ScreenCaptureStatus` and `ScreenLights` show what the capture thread is seeing while you drive.
 F1 and iRacing report their lights properly, so screen reading is skipped there, and pit-limiter
 frames are ignored as in the rest of the plugin.
+
+## Camera movement
+
+The plugin tells lights apart by where they sit in the box, so a cockpit that sways used to merge
+neighbouring lights or invent new ones. It now measures the movement and removes it before anything
+else is read:
+
+- The camera moves every light by the same amount, so the spacing between lights lit together never
+  changes. The frames with the whole strip lit give the strip's shape and say exactly where it was.
+- Every other frame is slid onto that shape. A frame showing part of an evenly spaced strip fits in
+  several places one light apart, so it takes the place nearest the frames next to it in time. A climb
+  out of the dark is followed backwards from the full strip it ends in.
+- If the full strip ranged over 6 pixels or less, the capture is treated as steady and read exactly as
+  recorded. Otherwise the report says how far the lights ranged.
+
+What it can't do:
+
+- **Sideways only.** Movement up and down just needs a taller box. Roll, zoom and "look to apex" change
+  the strip's shape and still have to be off.
+- **Reach the limiter in each sweep.** A sweep that goes dark, comes back with a few lights and never
+  fills the strip has nothing to be placed by. It is read correctly only if the camera moved less than
+  about 40% of the distance between two lights while the strip was dark.
+- **Tightly packed strips cope with less.** Replaying the captures in `tests/data` with artificial
+  sway, 54 of 56 produce the same car file with the strip ranging over 12 px, 53 over 24 px and 50 over
+  40 px. RaceRoom's DMD P21 (lights 21 px apart that bloom into each other) and one AC Bayer capture
+  go wrong even at 12 px.
+- **It has not yet been checked on a real drive with head movement on.** The numbers above come from
+  moving recorded light positions, which leaves out blur and anything else a moving camera does to
+  the picture. Check the result in game.
 
 ## Marking lights by hand
 

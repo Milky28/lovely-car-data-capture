@@ -60,6 +60,8 @@ namespace LovelyCarDataCapture.Screen
         public int? FlashRedlineMs;
         public int FlashCount;
         public int Samples;
+        /// <summary>How far the strip ranged on screen when the camera moved during the capture; 0 when it stood still.</summary>
+        public int CameraMovementPx;
         public List<string> Notes = new List<string>();
     }
 
@@ -110,6 +112,8 @@ namespace LovelyCarDataCapture.Screen
         /// isn't a light taken out and each RPM moved back by the game's display lag.
         /// </summary>
         private List<Sample> _samples = new List<Sample>();
+        /// <summary>The recording with camera movement taken out; the recording itself when there was none.</summary>
+        private List<Sample> _steady = new List<Sample>();
         private readonly StripCalibration _calibration = new StripCalibration();
         /// <summary>Per frame, whether the strip was in its redline state; null where it couldn't be told.</summary>
         private bool?[] _redline;
@@ -158,19 +162,21 @@ namespace LovelyCarDataCapture.Screen
 
         public ScreenLedResult Result()
         {
-            _samples = new List<Sample>(_recorded);
-            var result = new ScreenLedResult { Samples = _samples.Count };
-            if (_samples.Count == 0)
+            var result = new ScreenLedResult { Samples = _recorded.Count };
+            if (_recorded.Count == 0)
             {
                 result.Notes.Add("No frames were captured.");
                 return result;
             }
 
+            // Camera movement first: everything after this tells lights apart by where they sit.
+            bool moved = RemoveCameraMovement(result);
+            _samples = new List<Sample>(_steady);
             // The strip is worked out again once anything that isn't a light has been taken out.
             var calibration = _calibration;
             // Reflections first: they're recognised by being lit at idle, which the next step clears.
             bool fixtures = DropFixtures(result);
-            if (DropIdleAnimation(result) | fixtures)
+            if (DropIdleAnimation(result) | fixtures | moved)
             {
                 calibration = new StripCalibration();
                 foreach (var s in _samples)
@@ -300,6 +306,31 @@ namespace LovelyCarDataCapture.Screen
             if (layout.GapCount > 0)
                 result.Notes.Add("The strip has " + layout.GapCount + " gap(s) where the spacing leaves room but nothing ever lights.");
             return result;
+        }
+
+        /// <summary>
+        /// Slides every frame back to where the strip usually sits when the camera moved during the
+        /// capture (head movement, camera shake). A steady capture is left exactly as recorded.
+        /// </summary>
+        private bool RemoveCameraMovement(ScreenLedResult result)
+        {
+            _steady = _recorded;
+            var alignment = StripAlignment.Measure(_recorded.Select(s => s.X).ToList(), _recorded.Select(s => s.TimeMs).ToList());
+            if (alignment == null || !alignment.Moved) return false;
+            _steady = new List<Sample>(_recorded.Count);
+            for (int i = 0; i < _recorded.Count; i++)
+            {
+                var s = _recorded[i];
+                int shift = alignment.Shift[i];
+                // A new array each time: the recording itself is never changed.
+                if (shift != 0) s.X = s.X.Select(x => x - shift).ToArray();
+                _steady.Add(s);
+            }
+            result.CameraMovementPx = alignment.MovementPx;
+            result.Notes.Add("The camera moved during the capture: the lights ranged over about " + alignment.MovementPx +
+                             " pixels on screen. Each frame was lined up by the spacing of its lit lights before it was read. " +
+                             "Check the result in game, or capture again with head movement and camera shake off if anything looks wrong.");
+            return true;
         }
 
         /// <summary>
@@ -1189,7 +1220,7 @@ namespace LovelyCarDataCapture.Screen
                     _samples[start].Rpm < result.RedlineRpm.Value - RedlineMarginRpm) continue;
                 // Filtering an indicator colour can empty a frame even though the captured strip
                 // was fully lit. A colour phase is not a physical dark phase.
-                if (Enumerable.Range(start, end - start).Any(i => _recorded[i].X.Select(layout.SlotOf)
+                if (Enumerable.Range(start, end - start).Any(i => _steady[i].X.Select(layout.SlotOf)
                     .Where(s => s >= 0).Distinct().Count() >= lights - 1)) continue;
 
                 // A full strip on each side, allowing a frame or two of fade in between: a game that
