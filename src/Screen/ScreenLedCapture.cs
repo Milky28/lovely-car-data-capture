@@ -126,12 +126,15 @@ namespace LovelyCarDataCapture.Screen
         public bool IsFull => _recorded.Count >= MaxSamples;
         public int SampleCount => _recorded.Count;
         public int MostLightsSeen => _calibration.MostLightsInOneFrame;
+        /// <summary>A running count of full sweeps per gear, for guiding the drive. Export doesn't use it.</summary>
+        public readonly CaptureCoverage Coverage = new CaptureCoverage();
 
         public void Record(string gear, int rpm, long timeMs, IReadOnlyList<LitBlob> blobs)
         {
             if (string.IsNullOrEmpty(gear) || rpm <= 0 || blobs == null) return;
             if (_recorded.Count >= MaxSamples) return;
             _calibration.Add((IReadOnlyCollection<LitBlob>)blobs);
+            Coverage.Record(gear, rpm, blobs.Count);
             _recorded.Add(new Sample
             {
                 Gear = gear,

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Hands-off recording
+
+- The panel over the game now counts full sweeps for each gear while you drive
+  (`full sweeps: 1 ✓  2 ✓  3 –`) and says when a gear is covered and when every gear driven is. A
+  full sweep is a climb from a dark strip to the whole strip in one gear; the limiter's blinking
+  doesn't count as more.
+- Add *Start recording on its own when I'm in a car* (`AutoStartCapture`, off by default). A capture
+  begins once for each car when the game is live with the engine running and a capture box is set.
+  A capture begun this way that never saw a full sweep is not exported when SimHub closes.
+
 ### Finding the lights
 
 - Add **Find them for me…** and the `FindCaptureBox` action. The plugin watches the whole screen for

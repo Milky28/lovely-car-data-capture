@@ -294,6 +294,11 @@ namespace LovelyCarDataCapture.Plugin
             _screenReading = (CheckBox)screenOption.Children[0];
             _options.Children.Add(screenOption);
             _options.Children.Add(FrameRate());
+            _options.Children.Add(Check("Start recording on its own when I'm in a car", settings.AutoStartCapture,
+                                     "Begins a capture once for each car, as soon as the game is live with the engine running and a capture " +
+                                     "box is set. The panel over the game ticks off each gear as it gets a full sweep. Leave it off for " +
+                                     "ordinary driving: it records every drive, and a capture kept at the end has to be exported or discarded.",
+                                     v => _settings.AutoStartCapture = v));
             _options.Children.Add(Check("Use the measured values for gears that weren't swept", settings.CopyMeasuredToOtherGears,
                                      "For when only one gear could be swept cleanly. Two gears that agree are pooled anyway. Without " +
                                      "this, unswept gears keep the repo file's values and the file ends up saying two different things.",

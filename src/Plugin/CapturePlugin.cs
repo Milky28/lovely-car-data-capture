@@ -59,6 +59,10 @@ namespace LovelyCarDataCapture
         private string _liveGame, _liveCar;
         private double _liveRpm;     // engine speed right now, capturing or not, for finding the lights
         private bool _finding;
+        private string _autoStartedFor;   // game and car the last automatic start was for
+        private bool _autoStarted;        // the capture in hand began on its own
+        private readonly HashSet<string> _coveredSaid = new HashSet<string>();
+        private int _coverageCheckIn;
         private volatile string _lastExportPath = "";
         private volatile string _lastReportPath = "";
         private volatile string _lastAtsrDevPath = "";
@@ -151,6 +155,54 @@ namespace LovelyCarDataCapture
             SimHub.Logging.Current.Info(LogPrefix + _lastMark);
         }
 
+        /// <summary>
+        /// Begins a capture without being asked when the driver is in a car with the engine running,
+        /// once for each car. A capture that was stopped, exported or discarded isn't begun again
+        /// until the car changes, so the driver's own stop is respected.
+        /// </summary>
+        private void AutoStart(GameData data)
+        {
+            if (!Settings.AutoStartCapture || !Settings.ScreenCapture) return;
+            if (!data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null) return;
+            var d = data.NewData;
+            if (string.IsNullOrEmpty(d.CarId) || d.Rpms <= 0) return;
+            var box = SettingsBox();
+            if (box.Width < 8 || box.Height < 4) return;
+            string key = data.GameName + "|" + d.CarId;
+            lock (_lock)
+            {
+                if (key == _autoStartedFor || _exportPending || _exporting || _finding || _shuttingDown || _session != null) return;
+                _autoStartedFor = key;
+            }
+            SimHub.Logging.Current.Info(LogPrefix + "Starting a capture on its own for " + d.CarId + ".");
+            // Starting takes the action lock and restarts the screen thread: not for the telemetry thread.
+            Task.Run(() =>
+            {
+                try
+                {
+                    StartCapture();
+                    lock (_lock) _autoStarted = _capturing;
+                }
+                catch (Exception ex) { SimHub.Logging.Current.Error(LogPrefix + "Automatic start failed", ex); }
+            });
+        }
+
+        /// <summary>Says so, once, when a gear has had its full sweep. Called with the lock held.</summary>
+        private void AnnounceCoverage(CaptureSession session)
+        {
+            if (++_coverageCheckIn < 20) return;
+            _coverageCheckIn = 0;
+            var coverage = session.Screen.Coverage;
+            var fresh = coverage.Gears.Where(g => !_coveredSaid.Contains(g) && coverage.Covered(g)).ToList();
+            if (fresh.Count == 0) return;
+            foreach (var gear in fresh) _coveredSaid.Add(gear);
+            string named = string.Join(" and ", fresh.Select(g => g == "N" ? "Neutral" : "Gear " + g));
+            Say(named + " covered: a full sweep from a dark strip to all " + coverage.WholeStrip + " lights." +
+                (coverage.AllDrivenCovered
+                    ? " Every gear driven so far is covered. Change up for the next, or press Stop and export if that was the last."
+                    : ""));
+        }
+
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
             // Stamp arrival before taking _lock. A busy action must not make telemetry look newer than it was.
@@ -161,6 +213,7 @@ namespace LovelyCarDataCapture
                 _liveCar = data.GameRunning ? data.NewData?.CarId : null;
                 _liveRpm = data.GameRunning && !data.GamePaused && !data.GameReplay && data.NewData != null ? data.NewData.Rpms : 0;
             }
+            if (!_capturing) AutoStart(data);
             if (!_capturing || !data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null)
             {
                 lock (_lock)
@@ -217,6 +270,7 @@ namespace LovelyCarDataCapture
                     _captureSessionId++;
                     _telemetry.Reset(_captureSessionId);
                     _fullReported = false;
+                    _coveredSaid.Clear();
                     StartRepoLookup(data.GameName, d.CarId);
                 }
 
@@ -247,6 +301,7 @@ namespace LovelyCarDataCapture
                 }
                 else
                     _telemetry.Add(_captureSessionId, data.GameName, d.CarId, d.Gear, d.Rpms, telemetryAt);
+                AnnounceCoverage(s);
 
                 var raw = d.GetRawDataObject();
                 if (RawTelemetry.TryReadF1(raw, out var f1))
@@ -279,7 +334,9 @@ namespace LovelyCarDataCapture
             exporting?.GetAwaiter().GetResult();
             bool hasData;
             lock (_lock)
-                hasData = _exportPending && _session != null;
+                hasData = _exportPending && _session != null &&
+                          // A capture that began on its own and never saw a full sweep was just a drive.
+                          !(_autoStarted && !_session.Screen.Coverage.Gears.Any(g => _session.Screen.Coverage.Covered(g)));
             if (hasData)
             {
                 SimHub.Logging.Current.Info(LogPrefix + "SimHub is closing with an unsaved capture; exporting it.");
@@ -364,6 +421,8 @@ namespace LovelyCarDataCapture
                 parts.Add(string.IsNullOrEmpty(_currentGear) ? "gear ?" : "gear " + _currentGear);
                 parts.Add(_currentRpm + " rpm");
                 if (screenSource) parts.Add(_screen.LightsSeen + " lights lit");
+                string coverage = screenSource ? _session.Screen.Coverage.Describe() : "";
+                if (!string.IsNullOrEmpty(coverage)) parts.Add(coverage);
                 var progress = DescribeProgress(_session);
                 if (!string.IsNullOrEmpty(progress)) parts.Add(progress);
                 else parts.Add("no LED data yet");
@@ -440,6 +499,7 @@ namespace LovelyCarDataCapture
                     _skipScreenFrame = true;
                     _exportFailed = false;
                     _verifying = verify;
+                    _autoStarted = false;
                     _currentGear = null;
                     _currentRpm = 0;
                     _captureWaitReason = "";

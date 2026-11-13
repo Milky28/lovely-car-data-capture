@@ -57,6 +57,10 @@ RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration ->
   which is what keeps a smoothly filling HUD rev bar out; loosening or tightening the "together"
   tolerance trades that against telling touching lights apart. It only ever proposes: the picker
   saves the box.
+- `src/Screen/CaptureCoverage.cs` is the live guide only (full sweeps per gear for the overlay, fed
+  from `ScreenLedCapture.Record`). It counts raw blobs, before fixtures and indicators are removed,
+  and export never reads it. `AutoStartCapture` (off by default) starts a capture once per game and
+  car from `DataUpdate`; nothing in the tests drives `DataUpdate`, so that gate is untested.
 - `src/Profile/ProfileVerification.cs` checks an exported file against a second drive (the verify
   drive). It composes the drive by itself and compares the two files, so both get the same judgement;
   it writes nothing to the car file.

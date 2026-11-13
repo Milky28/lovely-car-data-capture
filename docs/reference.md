@@ -197,6 +197,17 @@ can't pull the game out of the foreground.
   The persistent **Last export** area on the plugin page keeps the same final result, warning summary,
   report link and output folder.
 
+While the lights are read off the screen the panel also keeps a line such as
+`full sweeps: 1 ✓  2 ✓  3 –`. A gear is ticked once it has had one full sweep: a climb in that gear
+that began with the strip dark, raised the revs by at least 300 rpm and reached the whole strip.
+The whole strip is the most lights two sweeps have reached (the most any has, until there are
+three). The strip blinking at the limiter is part of the same sweep, and a sweep is counted when the
+revs come back down, the gear changes, or the whole strip has been held for half a second. Neutral
+is listed once it has been swept; reverse never is. The count is a guide made from the raw frames as
+they arrive, so it can differ from what the export decides: the report is still the judgement. The
+panel says when a gear is covered, and when every gear driven so far is, which is the moment to
+change up or to stop and export.
+
 Untick *Show the panel over the game* on the plugin's page to turn it off; `ShowOverlay` in the settings
 file does the same.
 
@@ -227,6 +238,7 @@ Stored in SimHub's `PluginsData\Common\CapturePlugin.CaptureSettings.json` (edit
 | `CopyMeasuredToOtherGears` | `false` | Put the measured values into gears that weren't driven, instead of keeping the repo file's. Most cars use the same lights in every gear. |
 | `TopGearForNextExport` | `0` (Auto) | Highest forward gear to include in one export when SimHub cannot supply the count. Select 1–12 as **Top gear** in the Export step; resets after a successful export. |
 | `ShowOverlay` | `true` | Show the panel over the game saying what the plugin is doing. |
+| `AutoStartCapture` | `false` | Start a capture without being asked, once for each car, when the game is live with the engine running, screen reading is on and a capture box is set. A capture you stop, export or discard is not begun again until the car changes. It records every drive, so leave it off for ordinary driving. Also on the plugin's page. |
 | `SaveCaptureFrames` | `true` | Write `<car>.frames.csv` next to each screen-capture export: every frame's RPM and the lights seen. Replay it with `LovelyCarDataCapture.Tests.exe --replay <car>.frames.csv --repo-file <repo car>.json` to check a capture again without driving it. |
 | `SaveTransitionFrames` | `false` | Keep cropped images before, during and after changes in the detected lights. Enable before starting a diagnostic capture. Export writes PNGs and JSON metadata in `transitions/` inside the capture archive. Keeps up to two examples of each change per gear, at most 24 transitions per gear and 64 overall (up to 192 images), within 64 MiB of retained pixels. The report identifies skipped repeats, limits or missing images. |
 | `OverlayX` / `OverlayY` | *(top left)* | Where that panel sits; drag it to move it. |

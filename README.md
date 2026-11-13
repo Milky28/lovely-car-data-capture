@@ -48,7 +48,9 @@ reading; if you leave them on, draw the box with room to spare and see
    limiter for a second or two each time. Braking mid-sweep is fine. In a game whose wheel turns
    with yours, or that shows its lights well behind the revs (PMR), rev slowly in neutral instead,
    hands off the wheel. A panel over the game shows
-   what's being recorded.
+   what's being recorded, and ticks off each gear once it has had a full sweep from a dark strip
+   to every light (`full sweeps: 1 ✓  2 ✓  3 –`). With *Start recording on its own when I'm in a
+   car* ticked in the options, step 3 happens by itself once for each car.
 
    <img src="docs/images/capturing.jpg" width="420" alt="The recording panel over ACC: gear 2, 6768 rpm, 6 lights lit, 791 frames">
 5. In the **Export** step, if SimHub cannot report the car's gear count and you could not reach the

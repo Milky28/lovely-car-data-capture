@@ -188,6 +188,9 @@ namespace LovelyCarDataCapture.Tests
             Run("Finder takes lights that come on together", FinderTakesLightsThatComeOnTogether);
             Run("Finder proposes nothing without lights", FinderProposesNothingWithoutLights);
             Run("Finder says when the revs did not move", FinderSaysWhenTheRevsDidNotMove);
+            Run("Coverage counts full sweeps by gear", CoverageCountsFullSweepsByGear);
+            Run("Coverage holds with something always lit in the box", CoverageHoldsWithSomethingAlwaysLitInTheBox);
+            Run("Coverage agrees with saved drives", CoverageAgreesWithSavedDrives);
             Run("Alignment follows a climb out of the dark back from the full strip", AlignmentFollowsAClimbOutOfTheDark);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);
