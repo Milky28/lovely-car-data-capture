@@ -51,6 +51,12 @@ RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration ->
   to 1000 rpm only if nothing fits - PMR needs that). Don't go back to an RPM offset.
 - `src/Screen/StripDetector.cs`: colour-column blobs, with a white-hot-core fallback (PMR) when the
   colour pass smears or finds nothing.
+- `src/Screen/StripFinder.cs` proposes the capture box from whole-screen frames tagged with rpm
+  (Find them for me / `FindCaptureBox`): points dark below one engine speed and lit above it, grouped
+  into lights that come on at once, then into a row. Patches that come on bit by bit are rejected,
+  which is what keeps a smoothly filling HUD rev bar out; loosening or tightening the "together"
+  tolerance trades that against telling touching lights apart. It only ever proposes: the picker
+  saves the box.
 - `src/Profile/ProfileVerification.cs` checks an exported file against a second drive (the verify
   drive). It composes the drive by itself and compares the two files, so both get the same judgement;
   it writes nothing to the car file.

@@ -14,6 +14,7 @@ In SimHub's *Controls and events*, all under `LovelyCarDataCapture.`:
 | `StartVerify` | Starts a [verify drive](#verifying-an-export-with-a-second-drive): recorded like a capture, then checked against the car's exported file instead of replacing it. |
 | `ResetCapture` | Stops recording and throws away what's been recorded. StartCapture begins again. |
 | `PickCaptureBox` | Takes a still of the screen straight away and lets you draw the box on it. |
+| `FindCaptureBox` | Watches the whole screen for ten seconds while you rev, then shows a still with a box proposed round the lights it found, to keep or redraw. |
 | `ShowCaptureBox` | Opens the live frame over the game. |
 | `MarkLed` / `MarkRedline` / `UndoMark` | Marking lights by hand, for games whose lights can't be read. |
 

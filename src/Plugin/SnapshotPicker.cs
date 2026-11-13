@@ -34,7 +34,11 @@ namespace LovelyCarDataCapture.Plugin
         /// Copies every monitor at once. The same measuring stick as the box itself: both come from the
         /// same process's view of the screen, so they agree whatever the display scaling is.
         /// </summary>
-        public static DesktopSnapshot Take()
+        /// <param name="reuse">
+        /// A pixel buffer from an earlier snapshot to fill again when the screen is still the same size.
+        /// Many stills in a row would otherwise each allocate a desktop's worth of memory.
+        /// </param>
+        public static DesktopSnapshot Take(byte[] reuse = null)
         {
             int left = GetSystemMetrics(XVirtualScreen), top = GetSystemMetrics(YVirtualScreen);
             int width = GetSystemMetrics(CxVirtualScreen), height = GetSystemMetrics(CyVirtualScreen);
@@ -45,7 +49,7 @@ namespace LovelyCarDataCapture.Plugin
                 var data = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
                 try
                 {
-                    var bytes = new byte[data.Stride * height];
+                    var bytes = reuse != null && reuse.Length == data.Stride * height ? reuse : new byte[data.Stride * height];
                     Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
                     return new DesktopSnapshot { Frame = PixelFrame.Bgra32(bytes, width, height, data.Stride), Left = left, Top = top };
                 }
@@ -92,7 +96,11 @@ namespace LovelyCarDataCapture.Plugin
         private WpfPoint? _anchor;
         private Rect _rect = Rect.Empty;
 
-        public SnapshotPickerWindow(DesktopSnapshot shot, PixelRect current, Action<PixelRect> onSave)
+        /// <param name="proposal">
+        /// Said above the instructions when the box shown first is one the plugin found, not one the
+        /// driver drew, so it is looked at before it is kept.
+        /// </param>
+        public SnapshotPickerWindow(DesktopSnapshot shot, PixelRect current, Action<PixelRect> onSave, string proposal = null)
         {
             _shot = shot;
             _onSave = onSave;
@@ -127,6 +135,16 @@ namespace LovelyCarDataCapture.Plugin
 
             _found = new TextBlock { Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
             var hint = new StackPanel { Margin = new Thickness(14, 10, 14, 12) };
+            if (!string.IsNullOrEmpty(proposal))
+                hint.Children.Add(new TextBlock
+                {
+                    Text = proposal,
+                    Foreground = Brushes.Orange,
+                    FontWeight = FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 560,
+                    Margin = new Thickness(0, 0, 0, 6),
+                });
             hint.Children.Add(new TextBlock
             {
                 Text = "Draw a box round the rev lights, a little outside them. Arrows nudge it, Shift+arrows resize it. " +

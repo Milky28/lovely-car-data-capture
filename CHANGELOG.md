@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Finding the lights
+
+- Add **Find them for me…** and the `FindCaptureBox` action. The plugin watches the whole screen for
+  ten seconds while you rev the engine, finds the row of patches that are dark at low revs and lit at
+  high revs, and shows it boxed on a still. Nothing is saved until you keep the box; you can redraw
+  it there. A HUD rev bar drawn in blocks can be proposed in place of the lights, so the box is always
+  yours to check.
+
 ### Verify drive
 
 - Add **Start verify drive** and the `StartVerify` action. A second drive of the car is compared with

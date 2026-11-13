@@ -183,6 +183,11 @@ namespace LovelyCarDataCapture.Tests
             Run("Verify names what the file has wrong", VerifyNamesWhatTheFileHasWrong);
             Run("Verify refuses a different strip", VerifyRefusesADifferentStrip);
             Run("Workflow verify leaves the car file alone", WorkflowVerifyLeavesTheFileAlone);
+            Run("Finder picks the strip out of a busy screen", FinderPicksTheStripOutOfABusyScreen);
+            Run("Finder boxes lights that touch", FinderBoxesLightsThatTouch);
+            Run("Finder takes lights that come on together", FinderTakesLightsThatComeOnTogether);
+            Run("Finder proposes nothing without lights", FinderProposesNothingWithoutLights);
+            Run("Finder says when the revs did not move", FinderSaysWhenTheRevsDidNotMove);
             Run("Alignment follows a climb out of the dark back from the full strip", AlignmentFollowsAClimbOutOfTheDark);
             if (repoData != null) Run("Every repo file round-trips (" + repoData + ")", () => RepoRoundTrip(repoData));
             if (args.Contains("--live-repo")) Run("RepoClient finds cars on GitHub", LiveRepo);

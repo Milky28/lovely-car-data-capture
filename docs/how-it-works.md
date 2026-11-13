@@ -53,7 +53,21 @@ game in front it keeps the keyboard, so it uses system-wide shortcuts: **Ctrl+Al
 frame, **Ctrl+Alt+Shift+arrows** resize it, **Ctrl+Alt+Enter** finishes. The box is saved as you move
 it and *Undo changes* puts it back. Some games, ACC among them, keep even those keys and the pointer to
 themselves; use the still there. `LovelyCarDataCapture.ShowCaptureBox` opens the frame from a button.
-When you keep a box from **Pick the lights…**, its selected pixels are saved as `capture-box.png` in
+**Find them for me…** (or `LovelyCarDataCapture.FindCaptureBox` from the car) proposes the box
+instead of leaving it to you. For ten seconds it copies the whole screen about ten times a second
+and notes the engine speed with each copy, while you rev slowly up to the limiter and back, twice. A
+point on the screen is part of a rev light when one engine speed divides its frames cleanly: dark
+below it, lit above it (most of the time, since a strip at the limiter blinks). Scenery doesn't
+follow the revs, a needle is lit only as it passes and digits change every way, so little else
+survives. Points that come on together make a light, and three or more lights of about one size in a
+row make a strip. The best strip is shown boxed on the still with the most revs, and nothing is
+saved until you keep it. Its limits: the game has to be sending engine speed to SimHub and the revs
+have to move by at least 1,000 rpm; lights that touch on screen and come on only a few rpm apart may
+be counted as fewer lights, though the box still takes them all in; and anything else built of
+blocks that fill with the revs, a HUD rev bar above all, looks the same and may be offered. Hide
+such a bar or draw the box yourself when that happens.
+
+When you keep a box from **Pick the lights…** or **Find them for me…**, its selected pixels are saved as `capture-box.png` in
 the export folder for debugging. Picking another box replaces that image.
 
 **A game in borderless mode hides the mouse pointer and takes the keyboard while it has focus.** That's

@@ -57,6 +57,8 @@ namespace LovelyCarDataCapture
         private CaptureEvidence _evidence;
         private CaptureBoxImage _selectedBoxImage;
         private string _liveGame, _liveCar;
+        private double _liveRpm;     // engine speed right now, capturing or not, for finding the lights
+        private bool _finding;
         private volatile string _lastExportPath = "";
         private volatile string _lastReportPath = "";
         private volatile string _lastAtsrDevPath = "";
@@ -111,6 +113,8 @@ namespace LovelyCarDataCapture
             this.AddAction(actionName: "ShowCaptureBox", actionStart: (pm, _) => ShowCaptureBox());
             // Pressed in the car: the game is on screen right then, so the still is taken at once.
             this.AddAction(actionName: "PickCaptureBox", actionStart: (pm, _) => OnUiThread(() => PickFromStill(0)));
+            // Also pressed in the car: watches the whole screen while the engine is revved and proposes the box.
+            this.AddAction(actionName: "FindCaptureBox", actionStart: (pm, _) => OnUiThread(() => FindLights(0)));
         }
 
         private void Mark(bool redline)
@@ -155,6 +159,7 @@ namespace LovelyCarDataCapture
             {
                 _liveGame = data.GameRunning ? data.GameName : null;
                 _liveCar = data.GameRunning ? data.NewData?.CarId : null;
+                _liveRpm = data.GameRunning && !data.GamePaused && !data.GameReplay && data.NewData != null ? data.NewData.Rpms : 0;
             }
             if (!_capturing || !data.GameRunning || data.GamePaused || data.GameReplay || data.NewData == null)
             {
@@ -627,6 +632,135 @@ namespace LovelyCarDataCapture
             Tick();
         }
 
+        /// <summary>How long the screen is watched for the lights, and how often it is looked at.</summary>
+        private static readonly TimeSpan FindTime = TimeSpan.FromSeconds(10);
+        private const int FindFrameMs = 70;
+
+        /// <summary>
+        /// Watches the whole screen while the driver revs the engine, and opens the still with a box
+        /// already round whatever came on with the revs. The driver keeps it or draws another: nothing
+        /// is saved until they do.
+        /// </summary>
+        private void FindLights(int countdown)
+        {
+            lock (_lock)
+            {
+                if (_exporting || _finding) return;
+                if (_capturing)
+                {
+                    Say("Finish the capture first: the lights can't be looked for while one is recording.");
+                    return;
+                }
+                _finding = true;
+            }
+            _box?.Close();
+            EnsureOverlay();
+            if (countdown > 0) Say("Switch to the game now and sit in the car with the engine running.");
+            int left = countdown;
+            void Tick()
+            {
+                if (left > 0)
+                {
+                    _overlay?.Message("Switch to the game with the rev lights in view. Looking for them in " + left + "…");
+                    left--;
+                    var wait = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    wait.Tick += (s, e) => { wait.Stop(); Tick(); };
+                    wait.Start();
+                    return;
+                }
+                System.Threading.Tasks.Task.Run(() => WatchForLights());
+            }
+            Tick();
+        }
+
+        /// <summary>Off the UI thread: copying a desktop many times a second would freeze SimHub's window.</summary>
+        private void WatchForLights()
+        {
+            var finder = new StripFinder();
+            DesktopSnapshot best = null;
+            double bestRpm = -1;
+            byte[] spare = null;
+            string problem = null;
+            string game, car;
+            lock (_lock) { game = _liveGame; car = _liveCar; }
+            var shotAt = DateTime.UtcNow;
+            try
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                int told = -1;
+                while (clock.Elapsed < FindTime && !_shuttingDown)
+                {
+                    long began = clock.ElapsedMilliseconds;
+                    int remaining = (int)Math.Ceiling((FindTime - clock.Elapsed).TotalSeconds);
+                    if (remaining != told && (told < 0 || remaining % 3 == 0))
+                    {
+                        told = remaining;
+                        Say("Rev slowly up to the limiter and back down, twice. Watching the screen for " + remaining + " more seconds…");
+                    }
+                    double rpm;
+                    lock (_lock) rpm = _liveRpm;
+                    var shot = DesktopSnapshot.Take(spare);
+                    finder.Add(shot.Frame, rpm);
+                    // The still shown afterwards is the one with the most revs, so the lights are lit in it.
+                    if (rpm > bestRpm)
+                    {
+                        spare = best?.Frame.Pixels;
+                        best = shot;
+                        bestRpm = rpm;
+                        shotAt = DateTime.UtcNow;
+                    }
+                    else spare = shot.Frame.Pixels;
+                    int rest = FindFrameMs - (int)(clock.ElapsedMilliseconds - began);
+                    if (rest > 0) System.Threading.Thread.Sleep(rest);
+                }
+            }
+            catch (Exception ex) { problem = "Couldn't watch the screen: " + ex.Message; }
+
+            var found = new StripFinderResult { Problem = "Couldn't watch the screen." };
+            if (problem == null && best != null)
+            {
+                try { found = finder.Find(); }
+                catch (Exception ex) { problem = "Couldn't look for the lights: " + ex.Message; }
+            }
+            SimHub.Logging.Current.Info(LogPrefix + "Find the lights: " + finder.Frames + " frames, " +
+                (problem ?? found.Problem ?? (found.Strips.Count + " candidate(s)" +
+                    (found.Strips.Count > 0 ? ", best " + found.Strips[0].Lights + " lights at " + found.Strips[0].Box.X + "," +
+                        found.Strips[0].Box.Y + " " + found.Strips[0].Box.Width + "x" + found.Strips[0].Box.Height : ""))));
+
+            OnUiThread(() =>
+            {
+                lock (_lock) _finding = false;
+                if (_shuttingDown) return;
+                if (best == null || problem != null)
+                {
+                    Say(problem ?? "Couldn't watch the screen.");
+                    return;
+                }
+                var strip = found.Problem == null && found.Strips.Count > 0 ? found.Strips[0] : null;
+                PixelRect start = SettingsBox();
+                string proposal;
+                if (strip != null)
+                {
+                    start = new PixelRect(strip.Box.X + best.Left, strip.Box.Y + best.Top, strip.Box.Width, strip.Box.Height);
+                    proposal = "Found " + strip.Lights + " lights that came on with the revs. Check the box is round the car's rev lights, " +
+                               "not a HUD rev bar, then keep it or draw your own.";
+                }
+                else
+                    proposal = (found.Problem ?? "Nothing on screen came on with the revs the way rev lights do.") +
+                               " Draw the box yourself.";
+                Say(strip != null ? "Found " + strip.Lights + " lights. Check the box in SimHub's still and keep it." : proposal);
+                var picker = new SnapshotPickerWindow(best, start, region =>
+                {
+                    var image = new CaptureBoxImage { Png = best.RegionPng(region), Region = region, SelectedUtc = shotAt, Game = game, Car = car };
+                    if (!SaveCaptureBox(region, final: true, image: image)) return;
+                    try { best.SaveRegion(Path.Combine(OutputFolder(), "capture-box.png"), region); }
+                    catch (Exception ex) { SimHub.Logging.Current.Warn(LogPrefix + "Couldn't save capture-box.png: " + ex.Message); }
+                }, proposal);
+                picker.Show();
+                picker.Activate();
+            });
+        }
+
         /// <summary>Shows the capture box, or brings the one already open back to the front.</summary>
         private void ShowCaptureBoxFor(Action<PixelRect> onSave, Func<PixelRect, string> test)
         {
@@ -660,7 +794,7 @@ namespace LovelyCarDataCapture
                                       () => QueueExport(), ResetCapture, PageState, OpenExportPath, OpenBuilder,
                                       AtsrCopiesNow, RemoveAtsrCopy,
                                       () => System.Diagnostics.Process.Start("explorer.exe", "\"" + AtsrDevCopies.Folder(SimHubFolder) + "\""),
-                                      StartVerify);
+                                      StartVerify, () => FindLights(5));
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 

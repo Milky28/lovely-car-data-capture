@@ -37,6 +37,11 @@ reading; if you leave them on, draw the box with room to spare and see
    Saving a valid box turns on screen reading automatically. The top of the page shows the active
    source and whether the plugin is waiting, recording, exporting or holding a capture to export.
 
+   Or press **Find them for me…** and, once in the game, rev slowly up to the limiter and back twice.
+   The plugin watches the whole screen for ten seconds and shows a still with a box already round
+   whatever came on with the revs. Check it is the car's rev lights and not a HUD rev bar, then press
+   Enter to keep it or draw your own.
+
    <img src="docs/images/pick-the-lights.jpg" width="360" alt="A still of ACC with an orange box drawn round the dash's rev lights and a banner reporting six lit lights found">
 3. Press **Start capture**.
 4. **Rev slowly from idle to the limiter**, three or four times, in two or three gears. Hold the

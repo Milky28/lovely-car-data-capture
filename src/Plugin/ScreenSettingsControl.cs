@@ -82,7 +82,7 @@ namespace LovelyCarDataCapture.Plugin
                                      Func<string> outputFolder, Action start, Action stop, Action discard,
                                      Func<CapturePageState> state, Action<string> openPath, Action openBuilder,
                                      Func<List<AtsrCopy>> atsrCopies, Func<AtsrCopy, string> removeAtsrCopy,
-                                     Action openAtsrFolder, Action verify = null)
+                                     Action openAtsrFolder, Action verify = null, Action findLights = null)
         {
             _atsrCopies = atsrCopies;
             _removeAtsrCopy = removeAtsrCopy;
@@ -153,9 +153,27 @@ namespace LovelyCarDataCapture.Plugin
                     discard();
                 Tick();
             };
-            _setupButtons = new[] { still, box, testNow };
+            var find = new Button
+            {
+                Content = "Find them for me…",
+                Padding = new Thickness(14, 3, 14, 3),
+                Margin = new Thickness(0, 6, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Visibility = findLights == null ? Visibility.Collapsed : Visibility.Visible,
+                ToolTip = "Counts down five seconds for you to switch to the game, then watches the whole screen for ten seconds " +
+                          "while you rev the engine up to the limiter and back. Whatever came on with the revs is shown boxed " +
+                          "on a still for you to keep or redraw. Needs the game sending engine speed to SimHub.",
+            };
+            find.Click += (s, e) =>
+            {
+                findLights?.Invoke();
+                _result.Text = "";
+            };
+            _setupButtons = new[] { still, find, box, testNow };
             var buttons = new WrapPanel();
-            buttons.Children.Add(Step("1  PICK", "Frame the car's rev lights.", still));
+            var pickStep = Step("1  PICK", "Frame the car's rev lights.", still);
+            pickStep.Children.Add(find);
+            buttons.Children.Add(pickStep);
             buttons.Children.Add(Step("2  RECORD", "Make a few slow sweeps.", _start));
             var exportStep = Step("3  EXPORT", "Save the file and report.", _stop);
             exportStep.Children.Add(TopGear());
@@ -214,6 +232,7 @@ namespace LovelyCarDataCapture.Plugin
                 Bullet("The game must run borderless or windowed. Nothing outside it can read the screen in exclusive fullscreen."),
                 Bullet("The cockpit camera has to stay still: turn off head movement, camera shake and motion blur, and leave seat position and field of view alone once the box is placed."),
                 Bullet("Sit in the car with the lights in view, press Pick the lights, and switch to the game before the countdown ends. Then draw a box round the lights on the still, with a little room to spare. The PickCaptureBox button does the same from the car, straight away."),
+                Bullet("Find them for me watches the whole screen for ten seconds instead. Rev slowly up to the limiter and back, twice, and it boxes whatever came on with the revs on a still for you to keep or redraw. It can take a HUD rev bar for the lights, so look before keeping. FindCaptureBox does the same from the car."),
                 Bullet("Adjust live puts a frame over the running game instead, reading the lights as you rev. Move it with Ctrl+Alt+arrows, resize it with Ctrl+Alt+Shift+arrows, finish with Ctrl+Alt+Enter. Some games, ACC among them, keep those keys to themselves; use the still there.")));
 
             panel.Children.Add(Section("Driving a capture worth having", false,
