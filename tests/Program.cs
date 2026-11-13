@@ -187,6 +187,8 @@ namespace LovelyCarDataCapture.Tests
             Run("Finder boxes lights that touch", FinderBoxesLightsThatTouch);
             Run("Finder takes lights that come on together", FinderTakesLightsThatComeOnTogether);
             Run("Finder proposes nothing without lights", FinderProposesNothingWithoutLights);
+            Run("Finder ignores what changed with the clock", FinderIgnoresWhatChangedWithTheClock);
+            Run("Finder puts the lights above their reflection", FinderPutsTheLightsAboveTheirReflection);
             Run("Finder says when the revs did not move", FinderSaysWhenTheRevsDidNotMove);
             Run("Coverage counts full sweeps by gear", CoverageCountsFullSweepsByGear);
             Run("Coverage holds with something always lit in the box", CoverageHoldsWithSomethingAlwaysLitInTheBox);

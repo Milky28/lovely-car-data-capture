@@ -695,6 +695,8 @@ namespace LovelyCarDataCapture
         /// <summary>How long the screen is watched for the lights, and how often it is looked at.</summary>
         private static readonly TimeSpan FindTime = TimeSpan.FromSeconds(10);
         private const int FindFrameMs = 70;
+        /// <summary>Candidates offered on the still. More than a handful is a list to read, not a choice.</summary>
+        private const int MostProposals = 5;
 
         /// <summary>
         /// Watches the whole screen while the driver revs the engine, and opens the still with a box
@@ -796,26 +798,32 @@ namespace LovelyCarDataCapture
                     Say(problem ?? "Couldn't watch the screen.");
                     return;
                 }
-                var strip = found.Problem == null && found.Strips.Count > 0 ? found.Strips[0] : null;
-                PixelRect start = SettingsBox();
-                string proposal;
-                if (strip != null)
+                // The best few, to step through on the still: a HUD's own rev lights and a reflection
+                // of the strip follow the revs as well as the strip does, and only the driver knows which is which.
+                var strips = found.Problem == null ? found.Strips.Take(MostProposals).ToList() : new List<FoundStrip>();
+                var choices = new List<KeyValuePair<PixelRect, string>>();
+                for (int i = 0; i < strips.Count; i++)
                 {
-                    start = new PixelRect(strip.Box.X + best.Left, strip.Box.Y + best.Top, strip.Box.Width, strip.Box.Height);
-                    proposal = "Found " + strip.Lights + " lights that came on with the revs. Check the box is round the car's rev lights, " +
-                               "not a HUD rev bar, then keep it or draw your own.";
+                    var box = strips[i].Box;
+                    choices.Add(new KeyValuePair<PixelRect, string>(
+                        new PixelRect(box.X + best.Left, box.Y + best.Top, box.Width, box.Height),
+                        (strips.Count > 1 ? "Candidate " + (i + 1) + " of " + strips.Count + ": " : "Found ") + strips[i].Lights +
+                        " lights that came on with the revs. Check the box is round the car's own rev lights, not a HUD's or a reflection" +
+                        (strips.Count > 1 ? ". Tab shows the next candidate" : "") + ". Keep it or draw your own."));
                 }
-                else
-                    proposal = (found.Problem ?? "Nothing on screen came on with the revs the way rev lights do.") +
-                               " Draw the box yourself.";
-                Say(strip != null ? "Found " + strip.Lights + " lights. Check the box in SimHub's still and keep it." : proposal);
+                PixelRect start = choices.Count > 0 ? choices[0].Key : SettingsBox();
+                string proposal = choices.Count > 0 ? choices[0].Value
+                    : (found.Problem ?? "Nothing on screen came on with the revs the way rev lights do.") + " Draw the box yourself.";
+                Say(strips.Count == 0 ? proposal
+                    : strips.Count == 1 ? "Found " + strips[0].Lights + " lights. Check the box on the still and keep it."
+                    : "Found " + strips.Count + " things that follow the revs. Tab through them on the still and keep the car's lights.");
                 var picker = new SnapshotPickerWindow(best, start, region =>
                 {
                     var image = new CaptureBoxImage { Png = best.RegionPng(region), Region = region, SelectedUtc = shotAt, Game = game, Car = car };
                     if (!SaveCaptureBox(region, final: true, image: image)) return;
                     try { best.SaveRegion(Path.Combine(OutputFolder(), "capture-box.png"), region); }
                     catch (Exception ex) { SimHub.Logging.Current.Warn(LogPrefix + "Couldn't save capture-box.png: " + ex.Message); }
-                }, proposal);
+                }, proposal, choices.Skip(1).ToList());
                 picker.Show();
                 picker.Activate();
             });

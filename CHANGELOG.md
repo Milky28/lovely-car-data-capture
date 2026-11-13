@@ -17,8 +17,9 @@
 - Add **Find them for me…** and the `FindCaptureBox` action. The plugin watches the whole screen for
   ten seconds while you rev the engine, finds the row of patches that are dark at low revs and lit at
   high revs, and shows it boxed on a still. Nothing is saved until you keep the box; you can redraw
-  it there. A HUD rev bar drawn in blocks can be proposed in place of the lights, so the box is always
-  yours to check.
+  it there. A HUD's rev lights and a reflection of the strip follow the revs too, so up to five
+  candidates are offered, brightest and most strip-like first, and **Tab** steps through them.
+  The revs have to go up twice: what only changed once, like a lap timer, is then left out.
 
 ### Verify drive
 

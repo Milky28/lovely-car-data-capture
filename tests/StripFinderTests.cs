@@ -113,6 +113,39 @@ namespace LovelyCarDataCapture.Tests
             Equal(1, result.Strips[0].Steps, "steps");
         }
 
+        private static void FinderIgnoresWhatChangedWithTheClock()
+        {
+            // A lap timer: three digits that each come on part-way through the watch and stay on. They
+            // came on while the revs were high, but the second sweep finds them lit at idle too.
+            var result = FindOn((f, rpm) =>
+            {
+                var p = BusyScreen(f, rpm);
+                for (int i = 0; i < 3; i++)
+                    if (f >= 8 + 3 * i) Paint(p, 1300 + i * 30, 80, 16, 24, 255, 255, 255);
+                return p;
+            });
+            Equal(null, result.Problem, "problem");
+            Equal(0, result.Strips.Count, "strips found in a timer");
+        }
+
+        private static void FinderPutsTheLightsAboveTheirReflection()
+        {
+            // The strip, and the same strip mirrored dimly in the dash below it. Both follow the revs.
+            var result = FindOn((f, rpm) =>
+            {
+                var p = BusyScreen(f, rpm);
+                PaintStrip(p, f, rpm, 820, 610, 24);
+                bool blinkOff = rpm >= 7700 && f % 2 == 0;
+                for (int i = 0; i < 10; i++)
+                    if (rpm >= 5000 + 250 * i && !blinkOff) Paint(p, 824 + i * 24, 700, 14, 12, 30, 120, 30);
+                return p;
+            });
+            Check(result.Strips.Count >= 2, "both rows are candidates, found " + result.Strips.Count);
+            Check(result.Strips[0].Box.Y < 620 && result.Strips[0].Box.Bottom < 700, "the lights come first, not the reflection at " + result.Strips[0].Box.Y);
+            Check(result.Strips[1].Box.Y > 640, "and the reflection is the next candidate");
+            Check(result.Strips[0].Brightness > result.Strips[1].Brightness, "ranked by how bright they are");
+        }
+
         private static void FinderProposesNothingWithoutLights()
         {
             var result = FindOn(BusyScreen);
@@ -129,6 +162,10 @@ namespace LovelyCarDataCapture.Tests
 
             var noGame = FindOn(BusyScreen, revs: f => 0);
             Check(noGame.Problem != null && noGame.Problem.Contains("no engine speed"), "no game: " + noGame.Problem);
+
+            var once = FindOn((f, rpm) => { var p = BusyScreen(f, rpm); PaintStrip(p, f, rpm, 820, 610, 24); return p; },
+                              revs: f => 1200 + 100.0 * f);
+            Check(once.Problem != null && once.Problem.Contains("only once"), "one climb: " + once.Problem);
 
             var brief = FindOn(BusyScreen, frames: 5);
             Check(brief.Problem != null, "five frames are too few to say anything");

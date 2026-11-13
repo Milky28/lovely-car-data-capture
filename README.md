@@ -39,8 +39,9 @@ reading; if you leave them on, draw the box with room to spare and see
 
    Or press **Find them for me…** and, once in the game, rev slowly up to the limiter and back twice.
    The plugin watches the whole screen for ten seconds and shows a still with a box already round
-   whatever came on with the revs. Check it is the car's rev lights and not a HUD rev bar, then press
-   Enter to keep it or draw your own.
+   whatever came on with the revs. Check it is the car's own rev lights: a HUD's rev lights and a
+   reflection of the strip follow the revs too. **Tab** shows the next candidate when there is more
+   than one. Press Enter to keep the box or draw your own.
 
    <img src="docs/images/pick-the-lights.jpg" width="360" alt="A still of ACC with an orange box drawn round the dash's rev lights and a banner reporting six lit lights found">
 3. Press **Start capture**.

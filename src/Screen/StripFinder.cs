@@ -12,6 +12,8 @@ namespace LovelyCarDataCapture.Screen
         public int Lights;
         /// <summary>How many different engine speeds the lights came on at. One means they all lit together.</summary>
         public int Steps;
+        /// <summary>How bright the lights were when lit, 0 to 255. A reflection of a strip is dimmer than the strip.</summary>
+        public int Brightness;
         public double Score;
     }
 
@@ -79,6 +81,7 @@ namespace LovelyCarDataCapture.Screen
         private readonly List<byte[]> _masks = new List<byte[]>();
         private readonly List<double> _rpms = new List<double>();
         private ushort[] _litCount;
+        private uint[] _brightSum;       // brightest channel of each point, summed over the frames it was lit in
         private List<int[]> _regionBox;   // left, top, right, bottom of each region, in sampled points
         private int _width, _height, _step, _cols, _rows;
 
@@ -98,6 +101,7 @@ namespace LovelyCarDataCapture.Screen
                 _rows = _height / _step;
                 if (_cols == 0 || _rows == 0) return;
                 _litCount = new ushort[_cols * _rows];
+                _brightSum = new uint[_cols * _rows];
             }
             else if (frame.Width != _width || frame.Height != _height || _masks.Count >= ushort.MaxValue) return;
 
@@ -118,6 +122,7 @@ namespace LovelyCarDataCapture.Screen
                     if (max - min < LitSaturation && min < WhiteFloor) continue;
                     mask[cell >> 3] |= (byte)(1 << (cell & 7));
                     _litCount[cell]++;
+                    _brightSum[cell] += (uint)max;
                 }
             }
             _masks.Add(mask);
@@ -129,6 +134,8 @@ namespace LovelyCarDataCapture.Screen
             public int Left, Top, Right, Bottom;   // sampled points, inclusive
             public int Points;
             public long SplitSum;
+            public long BrightSum, LitFrames;
+            public double Brightness => LitFrames == 0 ? 0 : BrightSum / (double)LitFrames;
             public int LowSplit = int.MaxValue, HighSplit;
             public int Region;
             public int Width => Right - Left + 1;
@@ -156,6 +163,15 @@ namespace LovelyCarDataCapture.Screen
             {
                 result.Problem = "The revs barely moved (" + Math.Round(low) + " to " + Math.Round(high) +
                                  " rpm). Rev the engine up to the lights and back while it looks.";
+                return result;
+            }
+
+            // Once up tells nothing apart: a lap timer's digit that happened to change on the way up
+            // came on "with the revs" as surely as a light did. Twice up, with a fall between, and only
+            // what really follows the engine agrees both times.
+            if (ClimbsThrough((low + high) / 2) < 2)
+            {
+                result.Problem = "The revs went up only once. Rev up to the limiter and right back down, twice, while it looks.";
                 return result;
             }
 
@@ -187,8 +203,10 @@ namespace LovelyCarDataCapture.Screen
                 top = Math.Max(0, top - margin);
                 right = Math.Min(_width, right + margin);
                 bottom = Math.Min(_height, bottom + margin);
+                double brightness = row.Average(p => p.Brightness);
                 result.Strips.Add(new FoundStrip
                 {
+                    Brightness = (int)Math.Round(brightness),
                     Box = new PixelRect(left, top, right - left, bottom - top),
                     Lights = row.Count,
                     Steps = steps,
@@ -196,12 +214,28 @@ namespace LovelyCarDataCapture.Screen
                     // patches of very different widths look less like one. Lights with dark between
                     // them count for more than pieces of one lit run, which a rev bar caught at a few
                     // lengths can also be.
+                    // And the lights themselves are the brightest thing that follows the revs: their
+                    // reflection in the dash or the screen follows them just as well, only dimmer.
                     Score = (row.Count + steps) / (1 + spread) *
-                            (row.Select(p => p.Region).Distinct().Count() == row.Count ? ApartBonus : 1),
+                            (row.Select(p => p.Region).Distinct().Count() == row.Count ? ApartBonus : 1) *
+                            (brightness / 255) * (brightness / 255),
                 });
             }
             result.Strips = result.Strips.OrderByDescending(s => s.Score).ToList();
             return result;
+        }
+
+        /// <summary>How many times, in the order the frames were taken, the revs rose through this engine speed.</summary>
+        private int ClimbsThrough(double rpm)
+        {
+            int climbs = 0;
+            bool under = false;
+            foreach (double r in _rpms)
+            {
+                if (r < rpm) under = true;
+                else if (under) { climbs++; under = false; }
+            }
+            return climbs;
         }
 
         /// <summary>
@@ -213,6 +247,9 @@ namespace LovelyCarDataCapture.Screen
             var order = Enumerable.Range(0, n).OrderBy(i => _rpms[i]).ToArray();
             var ordered = order.Select(i => _masks[i]).ToArray();
             int side = Math.Max(2, (int)Math.Ceiling(SideShare * n));
+            // A point is only believed if the revs rose through the speed it comes on at twice.
+            var seenTwice = new bool[n + 1];
+            for (int k = 1; k < n; k++) seenTwice[k] = ClimbsThrough(_rpms[order[k]]) >= 2;
             var split = new ushort[_litCount.Length];
             var lit = new bool[n];
             for (int cell = 0; cell < split.Length; cell++)
@@ -234,7 +271,7 @@ namespace LovelyCarDataCapture.Screen
                     }
                     if (lit[k]) below++;
                 }
-                if (best == 0) continue;
+                if (best == 0 || !seenTwice[best]) continue;
                 if (bestBelow > Math.Max(1, (int)(LitBelowShare * best))) continue;
                 if (total - bestBelow < LitAboveShare * (n - best)) continue;
                 split[cell] = (ushort)best;
@@ -315,6 +352,8 @@ namespace LovelyCarDataCapture.Screen
                     int x = cell % _cols, y = cell / _cols;
                     patch.Points++;
                     patch.SplitSum += split[cell];
+                    patch.BrightSum += _brightSum[cell];
+                    patch.LitFrames += _litCount[cell];
                     if (split[cell] < patch.LowSplit) patch.LowSplit = split[cell];
                     if (split[cell] > patch.HighSplit) patch.HighSplit = split[cell];
                     if (x < patch.Left) patch.Left = x;

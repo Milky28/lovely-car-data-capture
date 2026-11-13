@@ -93,6 +93,9 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Canvas _canvas = new Canvas();
         private readonly WpfRectangle _selection;
         private readonly TextBlock _found;
+        private readonly List<KeyValuePair<PixelRect, string>> _choices = new List<KeyValuePair<PixelRect, string>>();
+        private TextBlock _proposal;
+        private int _choice;
         private WpfPoint? _anchor;
         private Rect _rect = Rect.Empty;
 
@@ -100,8 +103,15 @@ namespace LovelyCarDataCapture.Plugin
         /// Said above the instructions when the box shown first is one the plugin found, not one the
         /// driver drew, so it is looked at before it is kept.
         /// </param>
-        public SnapshotPickerWindow(DesktopSnapshot shot, PixelRect current, Action<PixelRect> onSave, string proposal = null)
+        /// <param name="others">
+        /// More boxes the plugin found, best first after <paramref name="current"/>, each with what to
+        /// say about it. Tab steps through them, so a wrong first guess costs one key.
+        /// </param>
+        public SnapshotPickerWindow(DesktopSnapshot shot, PixelRect current, Action<PixelRect> onSave, string proposal = null,
+                                    IReadOnlyList<KeyValuePair<PixelRect, string>> others = null)
         {
+            _choices.Add(new KeyValuePair<PixelRect, string>(current, proposal));
+            if (others != null) _choices.AddRange(others);
             _shot = shot;
             _onSave = onSave;
 
@@ -136,7 +146,7 @@ namespace LovelyCarDataCapture.Plugin
             _found = new TextBlock { Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
             var hint = new StackPanel { Margin = new Thickness(14, 10, 14, 12) };
             if (!string.IsNullOrEmpty(proposal))
-                hint.Children.Add(new TextBlock
+                hint.Children.Add(_proposal = new TextBlock
                 {
                     Text = proposal,
                     Foreground = Brushes.Orange,
@@ -255,6 +265,18 @@ namespace LovelyCarDataCapture.Plugin
         {
             if (e.Key == Key.Escape) { Close(); return; }
             if (e.Key == Key.Enter) { Accept(); return; }
+            if (e.Key == Key.Tab && _choices.Count > 1)
+            {
+                bool back = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+                _choice = (_choice + (back ? _choices.Count - 1 : 1)) % _choices.Count;
+                var box = _choices[_choice].Key;
+                double scale = Scale();
+                Show(new Rect((box.X - _shot.Left) / scale, (box.Y - _shot.Top) / scale, box.Width / scale, box.Height / scale));
+                Read();
+                if (_proposal != null) _proposal.Text = _choices[_choice].Value;
+                e.Handled = true;
+                return;
+            }
             if (_rect.IsEmpty) return;
             double step = ((Keyboard.Modifiers & ModifierKeys.Control) != 0 ? 10 : 1) / Scale();
             bool resize = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;

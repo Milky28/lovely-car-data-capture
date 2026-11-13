@@ -60,12 +60,16 @@ point on the screen is part of a rev light when one engine speed divides its fra
 below it, lit above it (most of the time, since a strip at the limiter blinks). Scenery doesn't
 follow the revs, a needle is lit only as it passes and digits change every way, so little else
 survives. Points that come on together make a light, and three or more lights of about one size in a
-row make a strip. The best strip is shown boxed on the still with the most revs, and nothing is
-saved until you keep it. Its limits: the game has to be sending engine speed to SimHub and the revs
+row make a strip. The revs must rise twice through the speed a point comes on at, so something
+that merely changed once while the revs were up, a lap timer's digit for one, is not taken for a
+light. Up to five strips are offered on the still with the most revs, ranked by how many lights
+they have, how evenly sized those are, whether they step up with the revs and how bright they are;
+**Tab** steps through them and nothing is saved until you keep one. Brightness is what puts the
+lights ahead of their own reflection in the dash, which follows the revs exactly as they do. Its limits: the game has to be sending engine speed to SimHub and the revs
 have to move by at least 1,000 rpm; lights that touch on screen and come on only a few rpm apart may
 be counted as fewer lights, though the box still takes them all in; and anything else built of
-blocks that fill with the revs, a HUD rev bar above all, looks the same and may be offered. Hide
-such a bar or draw the box yourself when that happens.
+blocks that light with the revs, a HUD's own rev lights above all, looks the same and may be offered
+first. Tab past it, hide that HUD element, or draw the box yourself when that happens.
 
 When you keep a box from **Pick the lights…** or **Find them for me…**, its selected pixels are saved as `capture-box.png` in
 the export folder for debugging. Picking another box replaces that image.

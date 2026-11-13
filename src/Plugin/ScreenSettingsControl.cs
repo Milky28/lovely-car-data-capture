@@ -232,7 +232,7 @@ namespace LovelyCarDataCapture.Plugin
                 Bullet("The game must run borderless or windowed. Nothing outside it can read the screen in exclusive fullscreen."),
                 Bullet("The cockpit camera has to stay still: turn off head movement, camera shake and motion blur, and leave seat position and field of view alone once the box is placed."),
                 Bullet("Sit in the car with the lights in view, press Pick the lights, and switch to the game before the countdown ends. Then draw a box round the lights on the still, with a little room to spare. The PickCaptureBox button does the same from the car, straight away."),
-                Bullet("Find them for me watches the whole screen for ten seconds instead. Rev slowly up to the limiter and back, twice, and it boxes whatever came on with the revs on a still for you to keep or redraw. It can take a HUD rev bar for the lights, so look before keeping. FindCaptureBox does the same from the car."),
+                Bullet("Find them for me watches the whole screen for ten seconds instead. Rev slowly up to the limiter and back, twice, and it boxes whatever came on with the revs on a still for you to keep or redraw. A HUD's rev lights or a reflection can be offered too: Tab steps through the candidates, so look before keeping. FindCaptureBox does the same from the car."),
                 Bullet("Adjust live puts a frame over the running game instead, reading the lights as you rev. Move it with Ctrl+Alt+arrows, resize it with Ctrl+Alt+Shift+arrows, finish with Ctrl+Alt+Enter. Some games, ACC among them, keep those keys to themselves; use the still there.")));
 
             panel.Children.Add(Section("Driving a capture worth having", false,
