@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Verify drive
+
+- Add **Start verify drive** and the `StartVerify` action. A second drive of the car is compared with
+  its exported file: every light in every gear driven, the redline, the colours, the blink and the
+  gaps. The verdict and each difference show on the page and in `<car>.verify.txt`; the car file is
+  not changed. A drive that differs is kept so it can replace the file. Two separate saved drives of
+  the same car agree this way for seven cars across PMR, ACC and AC.
+
 ### Camera movement
 
 - Read a capture made with head movement or camera shake on. Each frame is lined up by the spacing of

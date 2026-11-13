@@ -51,6 +51,9 @@ RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration ->
   to 1000 rpm only if nothing fits - PMR needs that). Don't go back to an RPM offset.
 - `src/Screen/StripDetector.cs`: colour-column blobs, with a white-hot-core fallback (PMR) when the
   colour pass smears or finds nothing.
+- `src/Profile/ProfileVerification.cs` checks an exported file against a second drive (the verify
+  drive). It composes the drive by itself and compares the two files, so both get the same judgement;
+  it writes nothing to the car file.
 - `src/Profile/ProfileComposer.cs` merges a capture with the repo file: pools gears agreeing within
   80 rpm (drops an outlier gear), rounds to 5, per-gear redlines, colour-group unification (45° rule),
   transparent redline for cars with no limiter effect.

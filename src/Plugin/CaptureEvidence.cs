@@ -138,6 +138,13 @@ namespace LovelyCarDataCapture.Plugin
             SaveManifest(session, settings, "exported", null);
         }
 
+        /// <summary>Keeps a verify drive's report with its frames. There is no car file: verifying writes none.</summary>
+        public void SaveVerify(CaptureSession session, CaptureSettings settings, string report, bool passed)
+        {
+            File.WriteAllText(Path.Combine(Folder, "verify.txt"), report, new UTF8Encoding(false));
+            SaveManifest(session, settings, passed ? "verified" : "verify found differences", null);
+        }
+
         public void SaveFailure(CaptureSession session, CaptureSettings settings, string error)
         {
             if (Folder != null) SaveManifest(session, settings, "export failed", error);
@@ -154,7 +161,7 @@ namespace LovelyCarDataCapture.Plugin
                 BuildId = assembly.ManifestModule.ModuleVersionId.ToString(), Outcome = outcome, Error = error,
                 StartSettings = _startSettings, ExportSettings = SettingsSnapshot(settings),
                 Frames = _framesFile, Profile = outcome == "exported" ? "car.json" : null,
-                Report = outcome == "exported" ? "report.txt" : null, Transitions = _transitionsFile,
+                Report = outcome == "exported" ? "report.txt" : outcome.StartsWith("verif", StringComparison.Ordinal) ? "verify.txt" : null, Transitions = _transitionsFile,
                 Selections = _selections.Where(s => s.Game == session.GameName && s.Car == session.CarId).Select(s => new
                 { File = "selection-" + (++number).ToString("00") + ".png", s.SelectedUtc, Box = Region(s.Region) }).ToArray(),
                 ScreenImages = _images.Select(i => new { i.File, Box = Region(i.Region), i.Fps, i.FirstFrame, i.LastFrame,

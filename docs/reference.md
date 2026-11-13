@@ -10,7 +10,8 @@ In SimHub's *Controls and events*, all under `LovelyCarDataCapture.`:
 | Action | Does |
 | --- | --- |
 | `StartCapture` | Starts recording the car you're in. |
-| `StopAndExport` | Exports the current or pending capture, writing the car file, its report and the raw frames. |
+| `StopAndExport` | Exports the current or pending capture, writing the car file, its report and the raw frames. Ends a verify drive instead when one is running. |
+| `StartVerify` | Starts a [verify drive](#verifying-an-export-with-a-second-drive): recorded like a capture, then checked against the car's exported file instead of replacing it. |
 | `ResetCapture` | Stops recording and throws away what's been recorded. StartCapture begins again. |
 | `PickCaptureBox` | Takes a still of the screen straight away and lets you draw the box on it. |
 | `ShowCaptureBox` | Opens the live frame over the game. |
@@ -38,6 +39,39 @@ is kept alongside as `<carId>.json.before-capture-<time>` rather than overwritte
 LMU reports the car `Lamborghini Iron Lynx 2024`, while ATSR canonicalizes it as `Lamborghini SC63`.
 For this one known case the local test copy is therefore named `lamborghini-sc63.json`; the exported
 Lovely Car Data file keeps the game's original car id.
+
+## Verifying an export with a second drive
+
+**Start verify drive** (in the *Last export* area, or the `StartVerify` action) records the car again
+and, when you press **Stop and verify**, compares that drive with the file already exported for the
+car. Drive it as you would a capture: a few slow sweeps to the limiter, in the gears you want checked.
+
+The drive is turned into the car file it would have exported by itself, and that is compared with the
+exported file:
+
+- each light in each gear the drive measured, counted as different more than 60 rpm apart;
+- each of those gears' redline, different more than 100 rpm apart;
+- every light's colour and the redline colour;
+- whether the strip blinks, and the blink interval if it does (different more than 35 ms apart);
+- which slots are gaps.
+
+`<car>.verify.txt` is written beside the car file, with the verdict first, then every difference, then
+what this drive did not check (gears not driven, lights only seen above the redline, a limiter never
+reached), then both sets of values side by side. A copy goes in the drive's capture folder.
+
+Nothing else is written. The car file, its report, its raw frames, its backups and any ATSR copy are
+left exactly as they were.
+
+- **It agrees:** the drive is finished with.
+- **It differs:** the drive is kept. **Export capture** replaces the file with it, by the usual rules
+  (gears not driven this time keep their previous values); **Discard capture** drops it.
+- **No file exported for this car yet:** the drive is kept, and **Retry export** saves it as the car's
+  file.
+
+A verify drive reads the lights off the screen, so it is not available for F1 or iRacing.
+
+Two separate drives of the same car in `tests/data` agree with each other this way for PMR's Mustang
+GT3, M4 GT3 Evo, Huracan GT3 Evo2 and Vantage GT4, ACC's Huracan GT3 Evo2 and AC's Adonis and Protech.
 
 ## Keeping confirmed colors and blink timing
 

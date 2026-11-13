@@ -11,14 +11,16 @@ namespace LovelyCarDataCapture.Plugin
 {
     internal sealed class CapturePageState
     {
-        public bool Capturing, Exporting, Pending, ExportFailed;
+        public bool Capturing, Exporting, Pending, ExportFailed, Verifying;
         public string Status = "", Source = "", Message = "";
         public string ExportSummary = "No export yet.", ExportDetails = "", ReportPath = "", OutputFolder = "";
         public string EvidenceFolder = "", ProfilePath = "", Game = "";
         public bool CanStart => !Capturing && !Exporting && !Pending;
         public bool CanExport => !Exporting && (Capturing || Pending);
         public bool CanDiscard => !Exporting && (Capturing || Pending);
-        public string ExportButton => Exporting ? "Exporting…" : Capturing ? "Stop and export" : ExportFailed ? "Retry export" : "Export capture";
+        public string ExportButton => Exporting ? (Verifying ? "Verifying…" : "Exporting…")
+            : Capturing ? (Verifying ? "Stop and verify" : "Stop and export")
+            : ExportFailed ? "Retry export" : Verifying ? "Verify capture" : "Export capture";
     }
 
     /// <summary>
@@ -56,6 +58,7 @@ namespace LovelyCarDataCapture.Plugin
         private readonly Button _start;
         private readonly Button _stop;
         private readonly Button _discard;
+        private readonly Button _verify;
         private readonly Button[] _setupButtons;
         private readonly StackPanel _options = new StackPanel();
         private readonly StackPanel _diagnostics = new StackPanel();
@@ -79,7 +82,7 @@ namespace LovelyCarDataCapture.Plugin
                                      Func<string> outputFolder, Action start, Action stop, Action discard,
                                      Func<CapturePageState> state, Action<string> openPath, Action openBuilder,
                                      Func<List<AtsrCopy>> atsrCopies, Func<AtsrCopy, string> removeAtsrCopy,
-                                     Action openAtsrFolder)
+                                     Action openAtsrFolder, Action verify = null)
         {
             _atsrCopies = atsrCopies;
             _removeAtsrCopy = removeAtsrCopy;
@@ -195,7 +198,12 @@ namespace LovelyCarDataCapture.Plugin
             _openEvidence = new Button { Content = "Open capture files", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0),
                 ToolTip = "This capture's raw frames, box images, settings, build version and report." };
             _openEvidence.Click += (s, e) => openPath(_state().EvidenceFolder);
-            review.Children.Add(new WrapPanel { Margin = new Thickness(0, 10, 0, 0), Children = { _openReport, _openBuilder } });
+            _verify = new Button { Content = "Start verify drive", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0),
+                ToolTip = "Drive the same car again: a few slow sweeps to the limiter, then Stop and verify. The drive is compared with " +
+                          "the car's exported file, light by light, and the file is left as it is. Use it to confirm an export before submitting." };
+            _verify.Click += (s, e) => { verify?.Invoke(); Tick(); };
+            _verify.Visibility = verify == null ? Visibility.Collapsed : Visibility.Visible;
+            review.Children.Add(new WrapPanel { Margin = new Thickness(0, 10, 0, 0), Children = { _openReport, _openBuilder, _verify } });
             review.Children.Add(_builderHelp);
             review.Children.Add(_exportDetailsSection);
             review.Children.Add(new WrapPanel { Margin = new Thickness(0, 6, 0, 0), Children = { _openOutput, _openEvidence } });
@@ -483,6 +491,7 @@ namespace LovelyCarDataCapture.Plugin
         {
             var state = _state();
             _start.IsEnabled = state.CanStart;
+            _verify.IsEnabled = state.CanStart;
             _stop.IsEnabled = state.CanExport;
             _stop.Content = state.ExportButton;
             _discard.IsEnabled = state.CanDiscard;

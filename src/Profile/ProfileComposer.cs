@@ -907,7 +907,7 @@ namespace LovelyCarDataCapture.Profile
         /// #FF8C00 and the capture's orange #FF8000 are the same light, and flagging them buries the
         /// differences that matter - a red the screen shows as orange - in ones that don't.
         /// </summary>
-        private static bool SameColour(string a, string b)
+        internal static bool SameColour(string a, string b)
         {
             if (!TryRgb(a, out var x) || !TryRgb(b, out var y)) return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
             if (x.Hue < 0 || y.Hue < 0) return x.Hue < 0 && y.Hue < 0;          // both grey or white
@@ -1104,7 +1104,7 @@ namespace LovelyCarDataCapture.Profile
         /// dark below its value has only an upper bound: the sweep started with it already lit, which
         /// is what a gear selected halfway up the rev range gives you.
         /// </summary>
-        private static bool Trusted(LedThreshold led)
+        internal static bool Trusted(LedThreshold led)
         {
             if (led == null || led.Inconsistent) return false;
             // Several identical midpoints do not make a threshold precise when every climb

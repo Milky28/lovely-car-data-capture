@@ -43,6 +43,8 @@ namespace LovelyCarDataCapture
         private bool _exporting;
         private bool _exportPending;
         private bool _exportFailed;
+        // This capture is a verify drive: stopping it checks the car's exported file and writes nothing over it.
+        private bool _verifying;
         private Task _exportTask;
         private volatile string _message = "";
         private string _exportSummary = "No export yet.";
@@ -97,6 +99,8 @@ namespace LovelyCarDataCapture
             _screen.Target = ScreenTargetNow;
 
             this.AddAction(actionName: "StartCapture", actionStart: (pm, _) => StartCapture());
+            // A second drive that checks the exported file instead of replacing it. StopAndExport ends it.
+            this.AddAction(actionName: "StartVerify", actionStart: (pm, _) => StartVerify());
             this.AddAction(actionName: "StopAndExport", actionStart: (pm, _) => QueueExport());
             this.AddAction(actionName: "ResetCapture", actionStart: (pm, _) => ResetCapture());
             // For games that don't report their LEDs: press as each in-game light comes on while revving slowly.
@@ -374,6 +378,7 @@ namespace LovelyCarDataCapture
                     _capturing = false;
                     _exportPending = false;
                     _exportFailed = false;
+                    _verifying = false;
                     _captureSessionId++;
                     _telemetry.Reset(_captureSessionId);
                     _session = null;
@@ -394,7 +399,23 @@ namespace LovelyCarDataCapture
             }
         }
 
-        internal void StartCapture()
+        internal void StartCapture() => StartCapture(verify: false);
+
+        /// <summary>
+        /// Starts a drive that is checked against the car's exported file when it stops, instead of
+        /// being exported over it. Recording is the same as for a capture.
+        /// </summary>
+        internal void StartVerify()
+        {
+            if (!Settings.ScreenCapture)
+            {
+                Say("A verify drive reads the rev lights off the screen. Pick the lights first.");
+                return;
+            }
+            StartCapture(verify: true);
+        }
+
+        private void StartCapture(bool verify)
         {
             lock (_actions)
             {
@@ -413,6 +434,7 @@ namespace LovelyCarDataCapture
                     _evidence = new CaptureEvidence(Settings, _selectedBoxImage);
                     _skipScreenFrame = true;
                     _exportFailed = false;
+                    _verifying = verify;
                     _currentGear = null;
                     _currentRpm = 0;
                     _captureWaitReason = "";
@@ -425,10 +447,12 @@ namespace LovelyCarDataCapture
                 StartScreenCapture();
                 ShowOverlay(true);
                 if (!Settings.ScreenCapture || _screen.IsRunning)
-                    Say(Settings.ScreenCapture
+                    Say(verify
+                        ? "Verify drive started. Rev slowly from idle to the limiter a few times, then stop: the drive is checked against this car's exported file, which is left as it is."
+                        : Settings.ScreenCapture
                         ? "Capture started, watching the rev lights on screen. Rev slowly from idle to the limiter a few times."
                         : "Capture started. F1 and iRacing use telemetry; screen reading is off for other games.");
-                SimHub.Logging.Current.Info(LogPrefix + "Capture started.");
+                SimHub.Logging.Current.Info(LogPrefix + (verify ? "Verify drive started." : "Capture started."));
             }
         }
 
@@ -635,7 +659,8 @@ namespace LovelyCarDataCapture
                                       StartCapture,
                                       () => QueueExport(), ResetCapture, PageState, OpenExportPath, OpenBuilder,
                                       AtsrCopiesNow, RemoveAtsrCopy,
-                                      () => System.Diagnostics.Process.Start("explorer.exe", "\"" + AtsrDevCopies.Folder(SimHubFolder) + "\""));
+                                      () => System.Diagnostics.Process.Start("explorer.exe", "\"" + AtsrDevCopies.Folder(SimHubFolder) + "\""),
+                                      StartVerify);
 
         public string LeftMenuTitle => "Lovely Car Data Capture";
 
@@ -672,7 +697,7 @@ namespace LovelyCarDataCapture
                         : "Screen reading off; F1/iRacing telemetry or manual marks";
                 return new CapturePageState
                 {
-                    Capturing = _capturing, Exporting = _exporting, Pending = _exportPending,
+                    Capturing = _capturing, Exporting = _exporting, Pending = _exportPending, Verifying = _verifying,
                     ExportFailed = _exportFailed, Status = OverlayStatus(), Source = source, Message = _message,
                     ExportSummary = _exportSummary, ExportDetails = _exportDetails,
                     ReportPath = _exportReportPath, OutputFolder = _exportFolder,
@@ -742,7 +767,7 @@ namespace LovelyCarDataCapture
             }
             _exporting = true;
             _exportFailed = false;
-            _exportSummary = "Exporting " + _session.CarId + " (" + _session.GameName + ")…";
+            _exportSummary = (_verifying ? "Verifying " : "Exporting ") + _session.CarId + " (" + _session.GameName + ")…";
             _exportGame = Slug.Make(_session.GameName);
             _exportDetails = "";
             _exportReportPath = "";
@@ -803,10 +828,17 @@ namespace LovelyCarDataCapture
                 ShowOverlay(false);
                 return;
             }
-            Say("Exporting " + session.CarId + "…");
+            bool verifying;
+            lock (_lock) verifying = _verifying;
+            Say((verifying ? "Verifying " : "Exporting ") + session.CarId + "…");
             if (_evidence == null) _evidence = new CaptureEvidence(Settings);
             try { _evidence.SaveRaw(session, Settings, _screen, Path.Combine(OutputFolder(), Slug.Make(session.GameName))); }
             finally { lock (_lock) _exportEvidenceFolder = _evidence.Folder ?? ""; }
+            if (verifying)
+            {
+                WriteVerify(session);
+                return;
+            }
 
             RepoLookup lookup = null;
             if (lookupTask != null)
@@ -906,6 +938,64 @@ namespace LovelyCarDataCapture
                 SimHub.Logging.Current.Error(LogPrefix + "Export failed for " + path, ex);
                 ExportFailed("Export failed: " + ex.Message + " Some files may already have been written; check the output folder.");
             }
+        }
+
+        /// <summary>
+        /// Ends a verify drive: checks it against the car's exported file and writes a verify report
+        /// beside that file. The file, its report, its raw frames and any ATSR copy are left alone.
+        /// </summary>
+        private void WriteVerify(CaptureSession session)
+        {
+            string path = Path.Combine(OutputFolder(), Slug.Make(session.GameName), Slug.Make(session.CarId) + ".json");
+            lock (_lock) _exportFolder = Path.GetDirectoryName(path);
+            if (!File.Exists(path))
+            {
+                // Nothing to check against. The drive is still a good capture, so it can be exported as one.
+                lock (_lock) _verifying = false;
+                ExportFailed("There is no exported file for this car to verify against (" + path + "). " +
+                             "Press Retry export to save this drive as the car's file, or discard it.");
+                return;
+            }
+
+            VerifyResult result;
+            string verifyPath = Path.ChangeExtension(path, ".verify.txt");
+            var utf8 = new UTF8Encoding(false);
+            try
+            {
+                var file = CarProfile.Parse(File.ReadAllText(path));
+                result = ProfileVerification.Verify(file, session, Settings, DateTime.Now);
+                result.Report.Insert(Math.Min(5, result.Report.Count), "File:      " + path);
+                result.Report.Add("");
+                result.Report.Add("Capture files: " + _evidence.Folder);
+                string text = string.Join(Environment.NewLine, result.Report) + Environment.NewLine;
+                File.WriteAllText(verifyPath, text, utf8);
+                _evidence.SaveVerify(session, Settings, text, result.Passed);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Error(LogPrefix + "Verify failed for " + path, ex);
+                ExportFailed("Verify failed: " + ex.Message + " The car's file was not changed.");
+                return;
+            }
+
+            lock (_lock)
+            {
+                _verifying = false;
+                // A drive that disagrees is kept, so it can replace the file if it is the better one.
+                _exportPending = !result.Passed;
+                _lastExportPath = path;
+                _exportReportPath = verifyPath;
+                _exportSummary = session.CarId + " (" + session.GameName + "): " + result.Summary +
+                    (result.Passed ? "" : " The file was not changed. Press Export capture to replace it with this drive, or discard the drive.");
+                var details = new List<string>();
+                details.AddRange(result.Differences);
+                if (result.NotChecked.Count > 0) details.Add("Not checked: " + string.Join("; ", result.NotChecked) + ".");
+                details.Add("File: " + path);
+                details.Add("Verify report: " + verifyPath);
+                _exportDetails = string.Join(Environment.NewLine, details);
+            }
+            SimHub.Logging.Current.Info(LogPrefix + "Verified " + path + ": " + result.Summary + " Report: " + verifyPath);
+            Say(_exportSummary);
         }
 
         // Lets the file be tried on real hardware straight away: with "Enable Local RPM Folder" on, ATSR reads this folder

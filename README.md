@@ -96,6 +96,13 @@ Games that pause when they lose focus: map **StartCapture**, **StopAndExport** a
 **PickCaptureBox** to wheel buttons in SimHub's *Controls and events*. A panel over the game
 confirms each press.
 
+## Verify it with a second drive
+
+Press **Start verify drive** in the *Last export* area, make a few more slow sweeps, and press **Stop
+and verify**. The second drive is compared with the file you just exported, light by light, and the
+page says whether they agree or what differs. The file is not changed. See
+[Reference](docs/reference.md#verifying-an-export-with-a-second-drive).
+
 ## Check it on your wheel
 
 If you use ATSR, you can see the new file on your wheel straight after the drive:
