@@ -55,7 +55,9 @@ RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration ->
   (Find them for me / `FindCaptureBox`): points dark below one engine speed and lit above it, grouped
   into lights that come on at once, then into a row. Patches that come on bit by bit are rejected,
   which is what keeps a smoothly filling HUD rev bar out; loosening or tightening the "together"
-  tolerance trades that against telling touching lights apart. It only ever proposes: the picker
+  tolerance trades that against telling touching lights apart. `LitAboveShare` under 0.6 lets
+  the HUD bar and needle of the test screen through. Every search writes `find-the-lights/` (notes,
+  map, still) to the export folder: ask for those before guessing why a real game went wrong. It only ever proposes: the picker
   saves the box.
 - `src/Screen/CaptureCoverage.cs` is the live guide only (full sweeps per gear for the overlay, fed
   from `ScreenLedCapture.Record`). It counts raw blobs, before fixtures and indicators are removed,

@@ -63,6 +63,13 @@ namespace LovelyCarDataCapture.Screen
         private const double LitBelowShare = 0.10;
         /// <summary>Share of the frames above it that must be lit. Under one, for a strip blinking at the limiter.</summary>
         private const double LitAboveShare = 0.60;
+        /// <summary>
+        /// Frames a light may show behind the engine speed it belongs to. Some games (PMR) draw their
+        /// lights a good part of a second late, and a quick blip in neutral is over by then: read
+        /// against the revs of the same instant, such a light is lit on the way down and dark on the
+        /// way up, and follows nothing.
+        /// </summary>
+        private const int MostFramesLate = 5;
         /// <summary>Each side of the dividing speed needs this share of the frames, and at least two.</summary>
         private const double SideShare = 0.10;
 
@@ -87,10 +94,18 @@ namespace LovelyCarDataCapture.Screen
 
         public int Frames => _masks.Count;
 
-        /// <summary>Adds one whole-screen frame and the engine speed it was taken at.</summary>
-        public void Add(PixelFrame frame, double rpm)
+        /// <summary>The engine speed of each frame, in the order they were added.</summary>
+        public IReadOnlyList<double> Rpms => _rpms;
+        /// <summary>Screen pixels between sampled points, each way.</summary>
+        public int Step => _step;
+
+        /// <summary>
+        /// Adds one whole-screen frame and the engine speed it was taken at. Returns how many sampled
+        /// points were lit in it, or -1 if the frame wasn't taken.
+        /// </summary>
+        public int Add(PixelFrame frame, double rpm)
         {
-            if (frame == null || double.IsNaN(rpm)) return;
+            if (frame == null || double.IsNaN(rpm)) return -1;
             if (_litCount == null)
             {
                 _width = frame.Width;
@@ -99,12 +114,13 @@ namespace LovelyCarDataCapture.Screen
                 while ((long)(_width / _step) * (_height / _step) > PointBudget) _step++;
                 _cols = _width / _step;
                 _rows = _height / _step;
-                if (_cols == 0 || _rows == 0) return;
+                if (_cols == 0 || _rows == 0) return -1;
                 _litCount = new ushort[_cols * _rows];
                 _brightSum = new uint[_cols * _rows];
             }
-            else if (frame.Width != _width || frame.Height != _height || _masks.Count >= ushort.MaxValue) return;
+            else if (frame.Width != _width || frame.Height != _height || _masks.Count >= ushort.MaxValue) return -1;
 
+            int litPoints = 0;
             var mask = new byte[(_cols * _rows + 7) / 8];
             var pixels = frame.Pixels;
             int red = frame.RedOffset, green = frame.GreenOffset, blue = frame.BlueOffset;
@@ -123,10 +139,12 @@ namespace LovelyCarDataCapture.Screen
                     mask[cell >> 3] |= (byte)(1 << (cell & 7));
                     _litCount[cell]++;
                     _brightSum[cell] += (uint)max;
+                    litPoints++;
                 }
             }
             _masks.Add(mask);
             _rpms.Add(rpm);
+            return litPoints;
         }
 
         private sealed class Patch
@@ -226,11 +244,13 @@ namespace LovelyCarDataCapture.Screen
         }
 
         /// <summary>How many times, in the order the frames were taken, the revs rose through this engine speed.</summary>
-        private int ClimbsThrough(double rpm)
+        private int ClimbsThrough(double rpm) => ClimbsThrough(_rpms, rpm);
+
+        private static int ClimbsThrough(IReadOnlyList<double> rpms, double rpm)
         {
             int climbs = 0;
             bool under = false;
-            foreach (double r in _rpms)
+            foreach (double r in rpms)
             {
                 if (r < rpm) under = true;
                 else if (under) { climbs++; under = false; }
@@ -238,45 +258,95 @@ namespace LovelyCarDataCapture.Screen
             return climbs;
         }
 
+        /// <summary>Why each sampled point was or wasn't taken as following the revs, for <see cref="Map"/>.</summary>
+        private byte[] _verdict;
+        private const byte Follows = 1, LitAtLowRevs = 2, DarkAtHighRevs = 3, SeenOnce = 4;
+
         /// <summary>
         /// For every sampled point, how many of the frames (in order of engine speed) lie below the speed
         /// it comes on at, or zero when it doesn't follow the revs.
         /// </summary>
         private ushort[] Splits(int n)
         {
-            var order = Enumerable.Range(0, n).OrderBy(i => _rpms[i]).ToArray();
-            var ordered = order.Select(i => _masks[i]).ToArray();
             int side = Math.Max(2, (int)Math.Ceiling(SideShare * n));
-            // A point is only believed if the revs rose through the speed it comes on at twice.
-            var seenTwice = new bool[n + 1];
-            for (int k = 1; k < n; k++) seenTwice[k] = ClimbsThrough(_rpms[order[k]]) >= 2;
+            // Each frame is tried against the revs of its own instant, then of one frame earlier, and
+            // so on: a point is taken at the first lateness it follows the revs at.
+            int tries = Math.Min(MostFramesLate, n / 8) + 1;
+            var ordered = new byte[tries][][];
+            var seenTwice = new bool[tries][];
+            for (int late = 0; late < tries; late++)
+            {
+                var rpms = Enumerable.Range(0, n).Select(i => _rpms[Math.Max(0, i - late)]).ToList();
+                var order = Enumerable.Range(0, n).OrderBy(i => rpms[i]).ToArray();
+                ordered[late] = order.Select(i => _masks[i]).ToArray();
+                // A point is only believed if the revs rose through the speed it comes on at twice.
+                seenTwice[late] = new bool[n + 1];
+                for (int k = 1; k < n; k++) seenTwice[late][k] = ClimbsThrough(rpms, rpms[order[k]]) >= 2;
+            }
             var split = new ushort[_litCount.Length];
+            _verdict = new byte[_litCount.Length];
             var lit = new bool[n];
             for (int cell = 0; cell < split.Length; cell++)
             {
                 int total = _litCount[cell];
                 if (total < 2 || total > n - side) continue;
                 int at = cell >> 3, bit = 1 << (cell & 7);
-                for (int f = 0; f < n; f++) lit[f] = (ordered[f][at] & bit) != 0;
-
-                int below = 0, best = 0, bestScore = int.MinValue, bestBelow = 0;
-                for (int k = 0; k <= n - 2; k++)
+                for (int late = 0; late < tries && split[cell] == 0; late++)
                 {
-                    // k frames lie below the dividing speed; below counts the lit ones among them.
-                    if (k >= side)
+                    var frames = ordered[late];
+                    for (int f = 0; f < n; f++) lit[f] = (frames[f][at] & bit) != 0;
+
+                    int below = 0, best = 0, bestScore = int.MinValue, bestBelow = 0;
+                    for (int k = 0; k <= n - 2; k++)
                     {
-                        int above = total - below;
-                        int score = 2 * above - (n - k) - 4 * below;
-                        if (score > bestScore) { bestScore = score; best = k; bestBelow = below; }
+                        // k frames lie below the dividing speed; below counts the lit ones among them.
+                        if (k >= side)
+                        {
+                            int above = total - below;
+                            int score = 2 * above - (n - k) - 4 * below;
+                            if (score > bestScore) { bestScore = score; best = k; bestBelow = below; }
+                        }
+                        if (lit[k]) below++;
                     }
-                    if (lit[k]) below++;
+                    if (best == 0) continue;
+                    byte verdict =
+                        bestBelow > Math.Max(1, (int)(LitBelowShare * best)) ? LitAtLowRevs
+                        : total - bestBelow < LitAboveShare * (n - best) ? DarkAtHighRevs
+                        : !seenTwice[late][best] ? SeenOnce : Follows;
+                    if (late == 0 || verdict == Follows) _verdict[cell] = verdict;
+                    if (verdict == Follows) split[cell] = (ushort)best;
                 }
-                if (best == 0 || !seenTwice[best]) continue;
-                if (bestBelow > Math.Max(1, (int)(LitBelowShare * best))) continue;
-                if (total - bestBelow < LitAboveShare * (n - best)) continue;
-                split[cell] = (ushort)best;
             }
             return split;
+        }
+
+        /// <summary>
+        /// A picture of what <see cref="Find"/> made of the screen, one pixel per sampled point, as
+        /// BGRA: green followed the revs; red was lit too often at low revs; blue was dark too often at
+        /// high revs; yellow would have followed but the revs passed its speed only once; grey was lit
+        /// at some time and never in question. For working out why a strip was or wasn't found.
+        /// </summary>
+        public byte[] Map(out int width, out int height)
+        {
+            width = _cols;
+            height = _rows;
+            if (_litCount == null) return new byte[0];
+            var map = new byte[_cols * _rows * 4];
+            for (int cell = 0; cell < _litCount.Length; cell++)
+            {
+                byte b = 0, g = 0, r = 0;
+                switch (_verdict != null ? _verdict[cell] : (byte)0)
+                {
+                    case Follows: g = 255; break;
+                    case LitAtLowRevs: r = 255; break;
+                    case DarkAtHighRevs: b = 255; g = 96; break;
+                    case SeenOnce: r = 255; g = 255; break;
+                    default: if (_litCount[cell] > 0) r = g = b = 70; break;
+                }
+                int i = cell * 4;
+                map[i] = b; map[i + 1] = g; map[i + 2] = r; map[i + 3] = 255;
+            }
+            return map;
         }
 
         /// <summary>Numbers every run of touching points that follow the revs, whatever speed each comes on at.</summary>

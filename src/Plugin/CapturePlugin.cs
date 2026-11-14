@@ -740,8 +740,10 @@ namespace LovelyCarDataCapture
         {
             var finder = new StripFinder();
             DesktopSnapshot best = null;
-            double bestRpm = -1;
+            int bestLit = -1;
+            double bestRpm = 0;
             byte[] spare = null;
+            var began0 = DateTime.UtcNow;
             string problem = null;
             string game, car;
             lock (_lock) { game = _liveGame; car = _liveCar; }
@@ -762,10 +764,13 @@ namespace LovelyCarDataCapture
                     double rpm;
                     lock (_lock) rpm = _liveRpm;
                     var shot = DesktopSnapshot.Take(spare);
-                    finder.Add(shot.Frame, rpm);
-                    // The still shown afterwards is the one with the most revs, so the lights are lit in it.
-                    if (rpm > bestRpm)
+                    int litPoints = finder.Add(shot.Frame, rpm);
+                    // The still shown afterwards is the one with the most of the screen lit. With the car
+                    // standing, that is the one with the most lights on. The frame with the most revs
+                    // isn't: at the limiter the strip blinks, and it may be caught dark.
+                    if (litPoints > bestLit)
                     {
+                        bestLit = litPoints;
                         spare = best?.Frame.Pixels;
                         best = shot;
                         bestRpm = rpm;
@@ -788,6 +793,20 @@ namespace LovelyCarDataCapture
                 (problem ?? found.Problem ?? (found.Strips.Count + " candidate(s)" +
                     (found.Strips.Count > 0 ? ", best " + found.Strips[0].Lights + " lights at " + found.Strips[0].Box.X + "," +
                         found.Strips[0].Box.Y + " " + found.Strips[0].Box.Width + "x" + found.Strips[0].Box.Height : ""))));
+
+            var stillOf = best;
+            var notes = new StringBuilder();
+            notes.AppendLine("Find the lights, " + began0.ToString("u") + ", " + game + " / " + car);
+            notes.AppendLine(finder.Frames + " frames over " + FindTime.TotalSeconds + " s, one point sampled every " + finder.Step + " pixels.");
+            notes.AppendLine("Still: the frame with the most lit points (" + bestLit + "), taken at " + Math.Round(bestRpm) + " rpm.");
+            notes.AppendLine("Engine speed of each frame: " + string.Join(" ", finder.Rpms.Select(r => Math.Round(r).ToString())));
+            notes.AppendLine(problem ?? found.Problem ?? (found.Strips.Count + " candidate(s), best first:"));
+            foreach (var strip in found.Strips)
+                notes.AppendLine("  " + strip.Lights + " lights, " + strip.Steps + " steps, brightness " + strip.Brightness + ", score " +
+                                 strip.Score.ToString("0.00") + ", box " + strip.Box.Width + "x" + strip.Box.Height + " at " +
+                                 (strip.Box.X + (stillOf?.Left ?? 0)) + "," + (strip.Box.Y + (stillOf?.Top ?? 0)));
+            notes.AppendLine("map.png, one pixel per sampled point: green followed the revs; red was lit too often at low revs; " +
+                             "blue was dark too often at high revs; yellow followed but the revs passed its speed only once; grey was lit at some time.");
 
             OnUiThread(() =>
             {
@@ -827,6 +846,22 @@ namespace LovelyCarDataCapture
                 picker.Show();
                 picker.Activate();
             });
+
+            // What the search saw, kept for when it picks wrongly: replaced by the next search.
+            try
+            {
+                string folder = Path.Combine(OutputFolder(), "find-the-lights");
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "notes.txt"), notes.ToString());
+                byte[] map = finder.Map(out int mapWidth, out int mapHeight);
+                if (map.Length > 0)
+                    new DesktopSnapshot { Frame = PixelFrame.Bgra32(map, mapWidth, mapHeight) }
+                        .SaveRegion(Path.Combine(folder, "map.png"), new PixelRect(0, 0, mapWidth, mapHeight));
+                if (stillOf != null)
+                    stillOf.SaveRegion(Path.Combine(folder, "still.png"),
+                                       new PixelRect(stillOf.Left, stillOf.Top, stillOf.Frame.Width, stillOf.Frame.Height));
+            }
+            catch (Exception ex) { SimHub.Logging.Current.Warn(LogPrefix + "Couldn't save what the search for the lights saw: " + ex.Message); }
         }
 
         /// <summary>Shows the capture box, or brings the one already open back to the front.</summary>

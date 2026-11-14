@@ -146,6 +146,23 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Strips[0].Brightness > result.Strips[1].Brightness, "ranked by how bright they are");
         }
 
+        private static void FinderFollowsLightsThatShowLate()
+        {
+            // PMR draws its lights well behind the revs. Blipped in neutral, the strip is lit on the way
+            // down and dark on the way up; three frames late here, with quick sweeps.
+            var history = new List<double>();
+            var result = FindOn((f, rpm) =>
+            {
+                history.Add(rpm);
+                var p = BusyScreen(f, rpm);
+                PaintStrip(p, f, history[Math.Max(0, f - 3)], 820, 610, 24);
+                return p;
+            }, frames: 90, revs: f => 1200 + 6800 * Math.Abs(Math.Sin(3.1 * Math.PI * f / 90 + 0.2)));
+            Check(result.Strips.Count >= 1, "no strip found");
+            Equal(10, result.Strips[0].Lights, "lights");
+            Check(result.Strips[0].Box.X <= 820 && result.Strips[0].Box.Right >= 820 + 9 * 24 + 14, "box spans the strip");
+        }
+
         private static void FinderProposesNothingWithoutLights()
         {
             var result = FindOn(BusyScreen);

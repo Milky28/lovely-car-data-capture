@@ -64,7 +64,13 @@ row make a strip. The revs must rise twice through the speed a point comes on at
 that merely changed once while the revs were up, a lap timer's digit for one, is not taken for a
 light. Up to five strips are offered on the still with the most revs, ranked by how many lights
 they have, how evenly sized those are, whether they step up with the revs and how bright they are;
-**Tab** steps through them and nothing is saved until you keep one. Brightness is what puts the
+**Tab** steps through them and nothing is saved until you keep one. A game that draws its lights
+late (PMR) would show them lit on the way down and dark on the way up, so each point is also tried
+against the revs of up to five frames earlier. The still is the frame with the most of the screen
+lit, because the frame with the most revs can catch a blinking strip dark. Every search writes
+`find-the-lights\notes.txt` (the revs of each frame and the candidates), `map.png` (green followed
+the revs, red was lit at low revs, blue was dark at high revs, yellow was passed only once) and
+`still.png` to the export folder, replacing the last search's. Brightness is what puts the
 lights ahead of their own reflection in the dash, which follows the revs exactly as they do. Its limits: the game has to be sending engine speed to SimHub and the revs
 have to move by at least 1,000 rpm; lights that touch on screen and come on only a few rpm apart may
 be counted as fewer lights, though the box still takes them all in; and anything else built of
