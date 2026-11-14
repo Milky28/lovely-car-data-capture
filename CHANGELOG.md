@@ -44,6 +44,10 @@
   artificial sway added to them, 54 give the same file with the strip ranging over 12 px, 53 over
   24 px and 50 over 40 px. Not yet checked on a real drive with head movement on. See
   [Camera movement](docs/how-it-works.md#camera-movement) for the limits.
+- A steering wheel turning under the box no longer adds a light to the strip. Something seen at one
+  end of the strip but never while the rest of it is lit (PMR's TS050 has indicator lights beside
+  its strip) is not one of its lights, and those frames are left out. That car came out with 16
+  LEDs, the first lit at any revs; it now gives 15.
 
 ## 0.2.3 - 2026-09-21
 

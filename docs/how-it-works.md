@@ -203,9 +203,17 @@ What it can't do:
   sway, 54 of 56 produce the same car file with the strip ranging over 12 px, 53 over 24 px and 50 over
   40 px. RaceRoom's DMD P21 (lights 21 px apart that bloom into each other) and one AC Bayer capture
   go wrong even at 12 px.
-- **It has not yet been checked on a real drive with head movement on.** The numbers above come from
-  moving recorded light positions, which leaves out blur and anything else a moving camera does to
-  the picture. Check the result in game.
+- **A steering wheel that turns.** PMR has no fixed-wheel option, so a strip on the wheel slides and
+  tilts under the box as you steer. A light beside the strip can then come into the box at one end,
+  or a part-lit strip can be lined up one light out, and the capture gains a light the car doesn't
+  have. A strip's own end light is lit when the rest of the strip is, so anything seen at an end but
+  never once while the rest of the strip is lit is not part of it, and the frames it was seen in are
+  left out. The report says how many. A real drive of PMR's TS050 (in `tests/data`) came out with 16
+  lights before this and 15 after. Keeping the wheel straight, or revving in neutral hands-off, is
+  still better.
+- **One real drive so far.** Apart from that TS050 drive, the numbers above come from moving recorded
+  light positions, which leaves out blur and anything else a moving camera does to the picture.
+  Check the result in game.
 
 ## Marking lights by hand
 

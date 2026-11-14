@@ -101,5 +101,25 @@ namespace LovelyCarDataCapture.Tests
                     Check(Math.Abs(alignment.Shift[i] - moved[i] - reference) <= 1,
                         "frame " + i + " with " + frames[i].Length + " lights: shift " + alignment.Shift[i] + " for a move of " + moved[i]);
         }
+
+        private static void TurningWheelAddsNoLightToTheStrip()
+        {
+            // PMR's TS050 has fifteen rev lights on a wheel that turns with the driver's, and a column
+            // of indicator lights at each end of them. Driven through the gears the strip slid about
+            // under the box, and the capture came out with sixteen lights, the first of them at 0 rpm:
+            // on the wheel, an LED that never went out.
+            var session = VerifySession("pmr-ts050-wheel-turning.frames.csv", car: "TS050");
+            var screen = session.Screen.Result();
+            Check(screen.CameraMovementPx > StripAlignment.SteadyPx, "the strip did move: " + screen.CameraMovementPx + " px");
+            Equal(15, screen.Layout.LedNumber, "lights on the strip");
+            Check(screen.Notes.Any(n => n.Contains("never while the rest of the strip was")), "the report says what was left out");
+
+            var profile = CarProfile.Parse(ProfileComposer.Compose(session, new CaptureSettings(), null, When).Profile.ToJson());
+            Equal(15, profile.LedNumber, "LEDs in the file");
+            foreach (var gear in profile.LedRpm)
+                for (int led = 1; led <= 15; led++)
+                    Check(gear.Value[led] > 6000 && (led == 1 || gear.Value[led] > gear.Value[led - 1]),
+                          "gear " + gear.Key + " LED " + led + " at " + gear.Value[led] + " rpm: every light has its own switch-on point, rising along the strip");
+        }
     }
 }

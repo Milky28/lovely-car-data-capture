@@ -179,6 +179,7 @@ namespace LovelyCarDataCapture.Tests
             Run("Compose a screen capture for a new car", ComposeScreenNewCar);
             Run("Camera sway leaves the car file unchanged", CameraSwayLeavesTheCarFileUnchanged);
             Run("Steady captures are left as recorded", SteadyCapturesAreLeftAsRecorded);
+            Run("A turning wheel adds no light to the strip", TurningWheelAddsNoLightToTheStrip);
             Run("Verify agrees with another drive of the same car", VerifyAgreesWithAnotherDriveOfTheSameCar);
             Run("Verify names what the file has wrong", VerifyNamesWhatTheFileHasWrong);
             Run("Verify refuses a different strip", VerifyRefusesADifferentStrip);

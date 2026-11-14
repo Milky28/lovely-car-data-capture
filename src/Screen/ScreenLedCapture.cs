@@ -191,6 +191,19 @@ namespace LovelyCarDataCapture.Screen
                 result.Notes.Add("The strip couldn't be made out: " + problem + ".");
                 return result;
             }
+            // Only where the camera moved: with a still camera nothing wanders into the box.
+            for (int round = 0; moved && round < 4 && DropVisitors(result.Layout, result); round++)
+            {
+                calibration = new StripCalibration();
+                foreach (var s in _samples)
+                    calibration.Add(s.X.Select(x => new LitBlob { Left = (int)Math.Floor(x), Right = (int)Math.Ceiling(x) }).ToList());
+                result.Layout = calibration.Build(out problem);
+                if (result.Layout == null)
+                {
+                    result.Notes.Add("The strip couldn't be made out: " + problem + ".");
+                    return result;
+                }
+            }
             var layout = result.Layout;
 
             FindAlternatingRedline(layout, result);
@@ -651,6 +664,64 @@ namespace LovelyCarDataCapture.Screen
             result.Notes.Add("The strip was lit at " + lowest + "-" + top + " rpm, well below where rev lights work (under half the " +
                              highest + " rpm reached) - the pit limiter, or an idle or start-up animation. Those " + frames + " frames were ignored.");
             return true;
+        }
+
+        /// <summary>Frames with the rest of the strip lit that are needed before an end light is doubted.</summary>
+        private const int FullStripFrames = 5;
+
+        /// <summary>
+        /// Takes out the frames in which something at one end of the strip was lit that isn't one of
+        /// its lights, and says whether there were any.
+        /// </summary>
+        /// <remarks>
+        /// When the view moves - a steering wheel that turns with the driver's, most of all - the box
+        /// stays where it is and the strip slides and tilts under it. A light beside the strip then
+        /// comes into the box at one end (PMR's TS050 has a column of indicator lights at each end of
+        /// its strip), or a part-lit strip is lined up one light out. Either way the capture gains a
+        /// light the car doesn't have, lit at any revs, and a file with it in lights that LED all the
+        /// time.
+        /// <para>
+        /// What gives it away: a strip's own end light is lit when the rest of the strip is, at the
+        /// limiter if nowhere else. Something that is seen at an end, but never once while the rest of
+        /// the strip is lit, is not part of it. The whole frame goes, not just that blob: if the strip
+        /// was lined up a light out, every light in the frame is in the wrong place.
+        /// </para>
+        /// </remarks>
+        private bool DropVisitors(StripLayout layout, ScreenLedResult result)
+        {
+            int n = layout.LedNumber;
+            if (n < 4) return false;
+            var slots = new int[_samples.Count][];
+            for (int i = 0; i < _samples.Count; i++)
+                slots[i] = _samples[i].X.Select(layout.SlotOf).Where(slot => slot >= 0).Distinct().ToArray();
+
+            foreach (int end in new[] { 0, n - 1 })
+            {
+                if (layout.IsGap[end]) continue;
+                // One short of the rest is enough either way: there may be a visitor at the other end too.
+                int rest = n - 2;
+                int restLit = 0, withRest = 0, seen = 0;
+                foreach (var frame in slots)
+                {
+                    bool lit = frame.Contains(end);
+                    int others = frame.Length - (lit ? 1 : 0);
+                    if (lit) seen++;
+                    if (others < rest) continue;
+                    restLit++;
+                    if (lit) withRest++;
+                }
+                if (seen == 0 || withRest > 0 || restLit < FullStripFrames) continue;
+
+                var drop = new HashSet<int>(Enumerable.Range(0, slots.Length).Where(i => slots[i].Contains(end)));
+                _samples = _samples.Where((s, i) => !drop.Contains(i)).ToList();
+                _steady = _steady.Where((s, i) => !drop.Contains(i)).ToList();
+                result.Notes.Add("Something at the " + (end == 0 ? "left" : "right") + " end of the strip was lit in " + drop.Count +
+                                 " frames but never while the rest of the strip was: a light beside the strip that came into the box as " +
+                                 "the view moved, or the strip read one light out of place. Those frames were left out. Keep the steering " +
+                                 "wheel straight, or capture in neutral with hands off the wheel, if the result looks wrong.");
+                return true;
+            }
+            return false;
         }
 
         /// <summary>Below this saturation a blob might be a reflection rather than a light.</summary>
