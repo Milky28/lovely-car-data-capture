@@ -24,7 +24,7 @@
   frame with the most lit, not the most revs, so a strip blinking at the limiter isn't shown dark.
   Lights drawn as a white core in a wide glow (PMR's TS050, whose strip floods the wheel purple at
   the limiter) are found by their cores, and the last lights of a strip, which only blink at the
-  limiter, are kept in the box.
+  limiter, are kept in the box, as is an end light that follows the revs without making a clean patch.
   Each search leaves `find-the-lights\notes.txt`, `map.png` and `still.png` in the export folder,
   showing what followed the revs and what was turned down, and why.
 

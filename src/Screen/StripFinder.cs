@@ -279,6 +279,31 @@ namespace LovelyCarDataCapture.Screen
                 var runs = row.Select(p => _regionBox[p.Region]).ToList();
                 int left = runs.Min(b => b[0]) * _step, right = (runs.Max(b => b[2]) + 1) * _step;
                 int top = runs.Min(b => b[1]) * _step, bottom = (runs.Max(b => b[3]) + 1) * _step;
+                // A light at the end of the row can follow the revs and still not have made a patch:
+                // the last light blinks at the limiter, and its points don't all agree on when it comes
+                // on. Whatever follows the revs, is the size of the row's lights and sits in line with
+                // them, a light's gap from either end, belongs in the box.
+                int high = row.Max(p => p.Height), wide = row.Max(p => p.Width);
+                int rowLeft = runs.Min(b => b[0]), rowRight = runs.Max(b => b[2]);
+                int rowTop = runs.Min(b => b[1]), rowBottom = runs.Max(b => b[3]);
+                double reach = row.Count > 1 ? 1.5 * (rowRight - rowLeft + 1) / (double)(row.Count - 1) : 2 * wide;
+                for (bool grew = true; grew;)
+                {
+                    grew = false;
+                    for (int id = 1; id < _regionBox.Count; id++)
+                    {
+                        var b = _regionBox[id];
+                        if (b[2] - b[0] + 1 > 2 * wide || b[3] - b[1] + 1 > 2 * high) continue;
+                        double midY = (b[1] + b[3]) / 2.0;
+                        if (midY < rowTop || midY > rowBottom) continue;
+                        bool leftOf = b[2] < rowLeft && rowLeft - b[2] <= reach, rightOf = b[0] > rowRight && b[0] - rowRight <= reach;
+                        if (!leftOf && !rightOf) continue;
+                        if (leftOf) rowLeft = b[0]; else rowRight = b[2];
+                        left = Math.Min(left, b[0] * _step);
+                        right = Math.Max(right, (b[2] + 1) * _step);
+                        grew = true;
+                    }
+                }
                 // "A little outside them", as the driver is asked to draw it.
                 int tallest = row.Max(p => p.Height) * _step;
                 int margin = Math.Max(8, tallest / 2);

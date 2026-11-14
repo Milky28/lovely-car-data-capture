@@ -187,6 +187,23 @@ namespace LovelyCarDataCapture.Tests
             Check(strip.Box.Height <= 70, "the box is round the cores, not the glow: " + strip.Box.Height + " tall");
         }
 
+        private static void FinderBoxTakesInAnEndLightThatMadeNoPatch()
+        {
+            // The last light comes on a sliver at a time, as a light blinking at the limiter can seem
+            // to: it follows the revs but is no clean patch. It is still part of the strip.
+            var result = FindOn((f, rpm) =>
+            {
+                var p = BusyScreen(f, rpm);
+                PaintStrip(p, f, rpm, 820, 610, 24);
+                for (int sliver = 0; sliver < 7; sliver++)
+                    if (rpm >= 6400 + 200 * sliver) Paint(p, 820 + 10 * 24 + 2 * sliver, 610, 2, 12, 240, 30, 30);
+                return p;
+            }, frames: 120);
+            Check(result.Strips.Count >= 1, "no strip found");
+            int right = 820 + 10 * 24 + 14;
+            Check(result.Strips[0].Box.Right >= right && result.Strips[0].Box.Right <= right + 30, "box right " + result.Strips[0].Box.Right + ", light ends at " + right);
+        }
+
         private static void FinderProposesNothingWithoutLights()
         {
             var result = FindOn(BusyScreen);
