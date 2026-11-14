@@ -66,10 +66,15 @@ light. Up to five strips are offered on the still with the most revs, ranked by 
 they have, how evenly sized those are, whether they step up with the revs and how bright they are;
 **Tab** steps through them and nothing is saved until you keep one. A game that draws its lights
 late (PMR) would show them lit on the way down and dark on the way up, so each point is also tried
-against the revs of up to five frames earlier. The still is the frame with the most of the screen
+against the revs of up to five frames earlier. The search is made twice, once on anything lit and once on white-hot
+cores alone (every channel at 170 or more): PMR draws a light as a small white core inside a glow
+many times its size, and at the limiter the glows of the whole strip run together, so by colour the
+strip is one blur and by its cores it is a row of dots. A light that is lit only 30 to 60% of the
+time above its speed can't start a strip, but it is taken into one found beside it: that is the
+last light or two, which come on just under the limiter and are then blinked. The still is the frame with the most of the screen
 lit, because the frame with the most revs can catch a blinking strip dark. Every search writes
 `find-the-lights\notes.txt` (the revs of each frame and the candidates), `map.png` (green followed
-the revs, red was lit at low revs, blue was dark at high revs, yellow was passed only once) and
+the revs, white did so as a core, red was lit at low revs, blue was dark at high revs, yellow was passed only once) and
 `still.png` to the export folder, replacing the last search's. Brightness is what puts the
 lights ahead of their own reflection in the dash, which follows the revs exactly as they do. Its limits: the game has to be sending engine speed to SimHub and the revs
 have to move by at least 1,000 rpm; lights that touch on screen and come on only a few rpm apart may

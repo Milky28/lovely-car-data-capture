@@ -58,11 +58,24 @@ namespace LovelyCarDataCapture.Screen
         private const int LitBrightness = 110;
         private const int LitSaturation = 55;
         private const int WhiteFloor = 200;
+        /// <summary>
+        /// Every channel this bright is the white-hot middle of a light. Some games (PMR) draw a light
+        /// as a small white core in a glow of its colour many times its size, and at the limiter the
+        /// glows of a whole strip run together over the wheel: by colour the strip is one lit blur, by
+        /// its cores it is a row of dots.
+        /// </summary>
+        private const int CoreFloor = 170;
 
         /// <summary>Share of the frames below the dividing engine speed that may be lit anyway (display lag).</summary>
         private const double LitBelowShare = 0.10;
         /// <summary>Share of the frames above it that must be lit. Under one, for a strip blinking at the limiter.</summary>
         private const double LitAboveShare = 0.60;
+        /// <summary>
+        /// A point lit this share of the time above its speed is no light on its own word, but it
+        /// may be the last light or two of a strip found beside it: those come on just under the
+        /// limiter, where the strip then blinks them dark half the time.
+        /// </summary>
+        private const double WeakAboveShare = 0.30;
         /// <summary>
         /// Frames a light may show behind the engine speed it belongs to. Some games (PMR) draw their
         /// lights a good part of a second late, and a quick blip in neutral is over by then: read
@@ -89,6 +102,16 @@ namespace LovelyCarDataCapture.Screen
         private readonly List<double> _rpms = new List<double>();
         private ushort[] _litCount;
         private uint[] _brightSum;       // brightest channel of each point, summed over the frames it was lit in
+        // The same three for white-hot cores alone.
+        private readonly List<byte[]> _coreMasks = new List<byte[]>();
+        private ushort[] _coreCount;
+        private uint[] _coreBright;
+        // Whichever of the two Find is working on.
+        private List<byte[]> _useMasks;
+        private ushort[] _useCount;
+        private uint[] _useBright;
+        private bool[] _weak;
+        private bool[] _coreFollows;
         private List<int[]> _regionBox;   // left, top, right, bottom of each region, in sampled points
         private int _width, _height, _step, _cols, _rows;
 
@@ -117,11 +140,14 @@ namespace LovelyCarDataCapture.Screen
                 if (_cols == 0 || _rows == 0) return -1;
                 _litCount = new ushort[_cols * _rows];
                 _brightSum = new uint[_cols * _rows];
+                _coreCount = new ushort[_cols * _rows];
+                _coreBright = new uint[_cols * _rows];
             }
             else if (frame.Width != _width || frame.Height != _height || _masks.Count >= ushort.MaxValue) return -1;
 
             int litPoints = 0;
             var mask = new byte[(_cols * _rows + 7) / 8];
+            var core = new byte[mask.Length];
             var pixels = frame.Pixels;
             int red = frame.RedOffset, green = frame.GreenOffset, blue = frame.BlueOffset;
             int stride = frame.Stride, size = frame.BytesPerPixel, half = _step / 2;
@@ -140,8 +166,13 @@ namespace LovelyCarDataCapture.Screen
                     _litCount[cell]++;
                     _brightSum[cell] += (uint)max;
                     litPoints++;
+                    if (min < CoreFloor) continue;
+                    core[cell >> 3] |= (byte)(1 << (cell & 7));
+                    _coreCount[cell]++;
+                    _coreBright[cell] += (uint)max;
                 }
             }
+            _coreMasks.Add(core);
             _masks.Add(mask);
             _rpms.Add(rpm);
             return litPoints;
@@ -150,7 +181,8 @@ namespace LovelyCarDataCapture.Screen
         private sealed class Patch
         {
             public int Left, Top, Right, Bottom;   // sampled points, inclusive
-            public int Points;
+            public int Points, WeakPoints;
+            public bool Weak => WeakPoints * 2 > Points;
             public long SplitSum;
             public long BrightSum, LitFrames;
             public double Brightness => LitFrames == 0 ? 0 : BrightSum / (double)LitFrames;
@@ -193,7 +225,40 @@ namespace LovelyCarDataCapture.Screen
                 return result;
             }
 
+            // By colour first, then by white-hot cores alone, and the best of both.
+            _useMasks = _masks; _useCount = _litCount; _useBright = _brightSum;
+            Analyse(n, result.Strips, keepVerdict: true);
+            _useMasks = _coreMasks; _useCount = _coreCount; _useBright = _coreBright;
+            var cores = new List<FoundStrip>();
+            Analyse(n, cores, keepVerdict: false);
+            // The same strip found both ways is one candidate: the better-scoring box stands.
+            foreach (var strip in cores)
+            {
+                int same = result.Strips.FindIndex(other => Overlap(other.Box, strip.Box) > 0.5);
+                if (same < 0) result.Strips.Add(strip);
+                else if (strip.Score > result.Strips[same].Score) result.Strips[same] = strip;
+            }
+            result.Strips = result.Strips.OrderByDescending(s => s.Score).ToList();
+            return result;
+        }
+
+        /// <summary>Share of the smaller box that lies inside the other.</summary>
+        private static double Overlap(PixelRect a, PixelRect b)
+        {
+            int width = Math.Min(a.Right, b.Right) - Math.Max(a.X, b.X), height = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Y, b.Y);
+            if (width <= 0 || height <= 0) return 0;
+            return width * (double)height / Math.Min(a.Width * (double)a.Height, b.Width * (double)b.Height);
+        }
+
+        private void Analyse(int n, List<FoundStrip> strips, bool keepVerdict)
+        {
+            byte[] verdict = _verdict;
             ushort[] split = Splits(n);
+            if (!keepVerdict)
+            {
+                _coreFollows = split.Select(k => k != 0).ToArray();
+                _verdict = verdict;
+            }
             // Neighbouring points are one light only if they come on together, give or take a frame in
             // fifty. Lights that touch on screen, or share a glow, then still come apart where the strip
             // steps. Any looser and neighbouring lights run together; any tighter and a smoothly
@@ -222,7 +287,7 @@ namespace LovelyCarDataCapture.Screen
                 right = Math.Min(_width, right + margin);
                 bottom = Math.Min(_height, bottom + margin);
                 double brightness = row.Average(p => p.Brightness);
-                result.Strips.Add(new FoundStrip
+                strips.Add(new FoundStrip
                 {
                     Brightness = (int)Math.Round(brightness),
                     Box = new PixelRect(left, top, right - left, bottom - top),
@@ -239,8 +304,6 @@ namespace LovelyCarDataCapture.Screen
                             (brightness / 255) * (brightness / 255),
                 });
             }
-            result.Strips = result.Strips.OrderByDescending(s => s.Score).ToList();
-            return result;
         }
 
         /// <summary>How many times, in the order the frames were taken, the revs rose through this engine speed.</summary>
@@ -278,19 +341,21 @@ namespace LovelyCarDataCapture.Screen
             {
                 var rpms = Enumerable.Range(0, n).Select(i => _rpms[Math.Max(0, i - late)]).ToList();
                 var order = Enumerable.Range(0, n).OrderBy(i => rpms[i]).ToArray();
-                ordered[late] = order.Select(i => _masks[i]).ToArray();
+                ordered[late] = order.Select(i => _useMasks[i]).ToArray();
                 // A point is only believed if the revs rose through the speed it comes on at twice.
                 seenTwice[late] = new bool[n + 1];
                 for (int k = 1; k < n; k++) seenTwice[late][k] = ClimbsThrough(rpms, rpms[order[k]]) >= 2;
             }
-            var split = new ushort[_litCount.Length];
-            _verdict = new byte[_litCount.Length];
+            var split = new ushort[_useCount.Length];
+            _verdict = new byte[_useCount.Length];
+            _weak = new bool[_useCount.Length];
             var lit = new bool[n];
             for (int cell = 0; cell < split.Length; cell++)
             {
-                int total = _litCount[cell];
+                int total = _useCount[cell];
                 if (total < 2 || total > n - side) continue;
                 int at = cell >> 3, bit = 1 << (cell & 7);
+                int weakSplit = 0;
                 for (int late = 0; late < tries && split[cell] == 0; late++)
                 {
                     var frames = ordered[late];
@@ -315,6 +380,13 @@ namespace LovelyCarDataCapture.Screen
                         : !seenTwice[late][best] ? SeenOnce : Follows;
                     if (late == 0 || verdict == Follows) _verdict[cell] = verdict;
                     if (verdict == Follows) split[cell] = (ushort)best;
+                    else if (verdict == DarkAtHighRevs && weakSplit == 0 && seenTwice[late][best] &&
+                             total - bestBelow >= WeakAboveShare * (n - best)) weakSplit = best;
+                }
+                if (split[cell] == 0 && weakSplit != 0)
+                {
+                    split[cell] = (ushort)weakSplit;
+                    _weak[cell] = true;
                 }
             }
             return split;
@@ -322,8 +394,8 @@ namespace LovelyCarDataCapture.Screen
 
         /// <summary>
         /// A picture of what <see cref="Find"/> made of the screen, one pixel per sampled point, as
-        /// BGRA: green followed the revs; red was lit too often at low revs; blue was dark too often at
-        /// high revs; yellow would have followed but the revs passed its speed only once; grey was lit
+        /// BGRA: green followed the revs; white did so as a white-hot core; red was lit too often at low
+        /// revs; blue was dark too often at high revs; yellow would have followed but the revs passed its speed only once; grey was lit
         /// at some time and never in question. For working out why a strip was or wasn't found.
         /// </summary>
         public byte[] Map(out int width, out int height)
@@ -343,6 +415,7 @@ namespace LovelyCarDataCapture.Screen
                     case SeenOnce: r = 255; g = 255; break;
                     default: if (_litCount[cell] > 0) r = g = b = 70; break;
                 }
+                if (_coreFollows != null && _coreFollows[cell]) r = g = b = 255;
                 int i = cell * 4;
                 map[i] = b; map[i + 1] = g; map[i + 2] = r; map[i + 3] = 255;
             }
@@ -421,9 +494,10 @@ namespace LovelyCarDataCapture.Screen
                     int cell = stack.Pop();
                     int x = cell % _cols, y = cell / _cols;
                     patch.Points++;
+                    if (_weak[cell]) patch.WeakPoints++;
                     patch.SplitSum += split[cell];
-                    patch.BrightSum += _brightSum[cell];
-                    patch.LitFrames += _litCount[cell];
+                    patch.BrightSum += _useBright[cell];
+                    patch.LitFrames += _useCount[cell];
                     if (split[cell] < patch.LowSplit) patch.LowSplit = split[cell];
                     if (split[cell] > patch.HighSplit) patch.HighSplit = split[cell];
                     if (x < patch.Left) patch.Left = x;
@@ -476,7 +550,8 @@ namespace LovelyCarDataCapture.Screen
                 if (home == null) rows.Add(home = new List<Patch>());
                 home.Add(patch);
             }
-            return rows.Where(r => r.Count >= FewestLights && r.Count <= MostLights).ToList();
+            // Weak patches only ever lengthen a strip: three that stand on their own word make one.
+            return rows.Where(r => r.Count(p => !p.Weak) >= FewestLights && r.Count <= MostLights).ToList();
         }
     }
 }

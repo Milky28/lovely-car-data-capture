@@ -163,6 +163,30 @@ namespace LovelyCarDataCapture.Tests
             Check(result.Strips[0].Box.X <= 820 && result.Strips[0].Box.Right >= 820 + 9 * 24 + 14, "box spans the strip");
         }
 
+        private static void FinderSeesCoresThroughTheGlow()
+        {
+            // PMR's Toyota: each light is a small white core in a glow of its colour several lights
+            // wide, and at the limiter the whole strip turns purple and floods the wheel. By colour
+            // the strip is one blur. The last lights come on just under the limiter and then blink.
+            var result = FindOn((f, rpm) =>
+            {
+                var p = BusyScreen(f, rpm);
+                bool limiter = rpm >= 7700, off = limiter && f % 2 == 0;
+                if (limiter && !off) Paint(p, 700, 520, 500, 220, 60, 30, 235);
+                for (int i = 0; i < 10; i++)
+                    if ((rpm >= 5000 + 290 * i || limiter) && !off) Paint(p, 820 - 30 + i * 42, 610 - 30, 82, 72, 30, 30, 220);
+                for (int i = 0; i < 10; i++)
+                    if ((rpm >= 5000 + 290 * i || limiter) && !off) Paint(p, 820 + i * 42, 610, 22, 22, 255, 215, 255);
+                return p;
+            }, frames: 110, revs: f => Math.Min(8000, 3500 + 5200 * Math.Abs(Math.Sin(3.2 * Math.PI * f / 110 + 0.2))));
+            Check(result.Strips.Count >= 1, "no strip found");
+            var strip = result.Strips[0];
+            Equal(10, strip.Lights, "lights");
+            Check(strip.Box.X <= 820 && strip.Box.X >= 820 - 40, "box left " + strip.Box.X);
+            Check(strip.Box.Right >= 820 + 9 * 42 + 22 && strip.Box.Right <= 820 + 9 * 42 + 22 + 40, "box right " + strip.Box.Right);
+            Check(strip.Box.Height <= 70, "the box is round the cores, not the glow: " + strip.Box.Height + " tall");
+        }
+
         private static void FinderProposesNothingWithoutLights()
         {
             var result = FindOn(BusyScreen);

@@ -56,7 +56,9 @@ RemoveCameraMovement -> DropFixtures -> DropIdleAnimation -> StripCalibration ->
   into lights that come on at once, then into a row. Patches that come on bit by bit are rejected,
   which is what keeps a smoothly filling HUD rev bar out; loosening or tightening the "together"
   tolerance trades that against telling touching lights apart. `LitAboveShare` under 0.6 lets
-  the HUD bar and needle of the test screen through. Every search writes `find-the-lights/` (notes,
+  the HUD bar and needle of the test screen through. It runs twice, on lit points and on white-hot cores
+  (PMR's TS050 floods the wheel with glow; Jason's files from that car are what set `CoreFloor`).
+  Every search writes `find-the-lights/` (notes,
   map, still) to the export folder: ask for those before guessing why a real game went wrong. It only ever proposes: the picker
   saves the box.
 - `src/Screen/CaptureCoverage.cs` is the live guide only (full sweeps per gear for the overlay, fed

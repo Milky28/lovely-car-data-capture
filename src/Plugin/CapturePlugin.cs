@@ -805,7 +805,7 @@ namespace LovelyCarDataCapture
                 notes.AppendLine("  " + strip.Lights + " lights, " + strip.Steps + " steps, brightness " + strip.Brightness + ", score " +
                                  strip.Score.ToString("0.00") + ", box " + strip.Box.Width + "x" + strip.Box.Height + " at " +
                                  (strip.Box.X + (stillOf?.Left ?? 0)) + "," + (strip.Box.Y + (stillOf?.Top ?? 0)));
-            notes.AppendLine("map.png, one pixel per sampled point: green followed the revs; red was lit too often at low revs; " +
+            notes.AppendLine("map.png, one pixel per sampled point: green followed the revs; white did so as a white-hot core; red was lit too often at low revs; " +
                              "blue was dark too often at high revs; yellow followed but the revs passed its speed only once; grey was lit at some time.");
 
             OnUiThread(() =>
